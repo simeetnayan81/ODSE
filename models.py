@@ -1,66 +1,27 @@
-"""Pydantic models for ODSE (Open Data Science Environment)."""
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
 
-from typing import Literal, Dict, Any
-from pydantic import BaseModel, Field
-from typing_extensions import Annotated
+"""
+Data models for the Odse Environment.
 
+The odse environment is a simple test environment that echoes back messages.
+"""
 
-class ImputeAction(BaseModel):
-    """Impute missing values in a column using a specified strategy."""
-    action_type: Literal["impute"] = Field(default="impute", frozen=True)
-    column: str = Field(description="Name of the column to impute")
-    strategy: Literal["mean", "median", "mode"] = Field(
-        description="Strategy for imputation"
-    )
-
-
-class DropAction(BaseModel):
-    """Drop a column from the dataset."""
-    action_type: Literal["drop"] = Field(default="drop", frozen=True)
-    column: str = Field(description="Name of the column to drop")
+from openenv.core.env_server.types import Action, Observation
+from pydantic import Field
 
 
-class SubmitAction(BaseModel):
-    """Submit the current state and terminate the episode."""
-    action_type: Literal["submit"] = Field(default="submit", frozen=True)
+class OdseAction(Action):
+    """Action for the Odse environment - just a message to echo."""
+
+    message: str = Field(..., description="Message to echo back")
 
 
-# Discriminated union of all possible actions
-Action = Annotated[
-    ImputeAction | DropAction | SubmitAction,
-    Field(discriminator="action_type")
-]
+class OdseObservation(Observation):
+    """Observation from the Odse environment - the echoed message."""
 
-
-class Observation(BaseModel):
-    """Observation returned by the environment.
-    
-    Includes metadata about the current dataset state and performance metrics.
-    """
-    column_metadata: Dict[str, Dict[str, Any]] = Field(
-        description="Metadata for each column: null_count, type, and null_percentage"
-    )
-    sample_head: Dict[str, list] = Field(
-        description="JSON representation of first 5 rows of the dataset"
-    )
-    current_accuracy: float = Field(
-        description="Current model accuracy via 5-fold CV on LogisticRegression",
-        ge=0.0,
-        le=1.0
-    )
-    step_count: int = Field(
-        description="Number of steps taken in the episode",
-        ge=0
-    )
-    nulls_remaining: int = Field(
-        description="Total number of null values remaining in the dataset",
-        ge=0
-    )
-
-
-class StepResult(BaseModel):
-    """Result returned by the step() method."""
-    observation: Observation
-    reward: float
-    done: bool
-    info: Dict[str, Any] = Field(default_factory=dict)
+    echoed_message: str = Field(default="", description="The echoed message")
+    message_length: int = Field(default=0, description="Length of the echoed message")

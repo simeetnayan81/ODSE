@@ -1,143 +1,255 @@
-# ODSE
-Open Data Science Environment (ODSE): A standardized environment for AI agents to master end-to-end data science pipelines.
+---
+title: Odse Environment Server
+emoji: 🎪
+colorFrom: pink
+colorTo: yellow
+sdk: docker
+pinned: false
+app_port: 8000
+base_path: /web
+tags:
+  - openenv
+---
 
-## Overview
+# Odse Environment
 
-ODSE is a Reinforcement Learning environment built for Data Science Sandbox. It simulates the various **Data Science** task where agents learn to handle missing values and improve model accuracy. The environment follows a strict API specification: `reset()`, `state()`, and `step(action)`.
-
-## Features
-
-- **Pydantic-typed API**: Fully type-safe observations and actions using Pydantic v2 discriminated unions
-- **Pandas-based State Management**: Internal state managed as a working DataFrame
-- **Scikit-learn Integration**: Fast accuracy evaluation via 5-fold cross-validation with LogisticRegression
-- **Embedded Titanic Dataset**: Pre-packaged dirty Titanic CSV for quick testing
-- **Structured Rewards**: Accuracy-based rewards with step penalties
-- **Performance Grading**: Built-in grader function for evaluating agent performance
-
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-## API Reference
-
-### Environment Interface
-
-#### `reset() → Observation`
-Loads a dirty Titanic dataset and resets the episode. Returns initial observation.
-
-**Example:**
-```python
-env = ODSEEnvironment(seed=42)
-obs = env.reset()
-```
-
-#### `state() → Observation`
-Returns current environment state with column metadata and model accuracy.
-
-**Observation fields:**
-- `column_metadata`: Dict mapping column names to `{null_count, type, null_percentage}`
-- `sample_head`: First 5 rows as JSON dict
-- `current_accuracy`: 5-fold CV accuracy on LogisticRegression (0.0-1.0)
-- `step_count`: Number of actions taken
-- `nulls_remaining`: Total missing values in dataset
-
-#### `step(action: Action) → StepResult`
-Executes an action and returns the result.
-
-**Action Types (Discriminated Union):**
-
-1. **ImputeAction**
-   ```python
-   ImputeAction(column="Age", strategy="mean" | "median" | "mode")
-   ```
-   Fills missing values using the specified strategy.
-
-2. **DropAction**
-   ```python
-   DropAction(column="Cabin")
-   ```
-   Removes a column entirely.
-
-3. **SubmitAction**
-   ```python
-   SubmitAction()
-   ```
-   Terminates the episode and triggers final evaluation.
-
-**StepResult fields:**
-- `observation`: Updated observation
-- `reward`: (accuracy_gain × 10.0) - 0.01 (step penalty)
-- `done`: True if episode terminated
-- `info`: Dict with debugging info
-
-#### `grade_performance(final_df: DataFrame) → float`
-Evaluates final performance on a 0.0-1.0 scale.
-
+A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
 
 ## Quick Start
 
+The simplest way to use the Odse environment is through the `OdseEnv` class:
+
 ```python
-from env import ODSEEnvironment, grade_performance
-from models import ImputeAction, DropAction, SubmitAction
+from odse import OdseAction, OdseEnv
 
-# Initialize
-env = ODSEEnvironment(seed=42)
-obs = env.reset()
+try:
+    # Create environment from Docker image
+    odseenv = OdseEnv.from_docker_image("odse-env:latest")
 
-# Take actions
-action = ImputeAction(column="Age", strategy="mean")
-result = env.step(action)
+    # Reset
+    result = odseenv.reset()
+    print(f"Reset: {result.observation.echoed_message}")
 
-action = DropAction(column="Cabin")
-result = env.step(action)
+    # Send multiple messages
+    messages = ["Hello, World!", "Testing echo", "Final message"]
 
-# Submit episode
-result = env.step(SubmitAction())
-score = grade_performance(env.working_df)
-print(f"Final Score: {score:.2f}")
+    for msg in messages:
+        result = odseenv.step(OdseAction(message=msg))
+        print(f"Sent: '{msg}'")
+        print(f"  → Echoed: '{result.observation.echoed_message}'")
+        print(f"  → Length: {result.observation.message_length}")
+        print(f"  → Reward: {result.reward}")
+
+finally:
+    # Always clean up
+    odseenv.close()
 ```
 
-## Example Run
+That's it! The `OdseEnv.from_docker_image()` method handles:
+- Starting the Docker container
+- Waiting for the server to be ready
+- Connecting to the environment
+- Container cleanup when you call `close()`
 
-Run the example script:
+## Building the Docker Image
+
+Before using the environment, you need to build the Docker image:
+
 ```bash
-python example.py
+# From project root
+docker build -t odse-env:latest -f server/Dockerfile .
 ```
 
-## Reward Structure
+## Deploying to Hugging Face Spaces
 
-The agent receives rewards based on:
+You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+
+```bash
+# From the environment directory (where openenv.yaml is located)
+openenv push
+
+# Or specify options
+openenv push --namespace my-org --private
 ```
-reward = (new_accuracy - old_accuracy) × 10 - 0.01
+
+The `openenv push` command will:
+1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
+2. Prepare a custom build for Hugging Face Docker space (enables web interface)
+3. Upload to Hugging Face (ensuring you're logged in)
+
+### Prerequisites
+
+- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
+
+### Options
+
+- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
+- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
+- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
+- `--private`: Deploy the space as private (default: public)
+
+### Examples
+
+```bash
+# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
+openenv push
+
+# Push to a specific repository
+openenv push --repo-id my-org/my-env
+
+# Push with a custom base image
+openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
+
+# Push as a private space
+openenv push --private
+
+# Combine options
+openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
 ```
 
-- **Positive reward**: Accuracy improves (incentivizes data quality)
-- **Step penalty**: -0.01 per action (encourages efficiency)
-- **Submit bonus**: No penalty for submitting
+After deployment, your space will be available at:
+`https://huggingface.co/spaces/<repo-id>`
 
-## Termination Conditions
+The deployed space includes:
+- **Web Interface** at `/web` - Interactive UI for exploring the environment
+- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
+- **Health Check** at `/health` - Container health monitoring
+- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
 
-An episode ends when:
-1. Agent calls `SubmitAction()`
-2. All missing values are imputed/removed (`nulls_remaining == 0`)
+## Environment Details
 
-## Implementation Notes
+### Action
+**OdseAction**: Contains a single field
+- `message` (str) - The message to echo back
 
-- **Dataset**: Dirty Titanic CSV with 20 rows and ~20% missing values in key features
-- **Target**: Survived (binary classification)
-- **Features**: Auto-selects numeric and categorical columns (excludes PassengerId, Name, Ticket, Cabin from features by default in grading)
-- **CV Strategy**: 5-fold cross-validation for robust accuracy estimates
-- **Encoding**: LabelEncoder for categorical features during model training
+### Observation
+**OdseObservation**: Contains the echo response and metadata
+- `echoed_message` (str) - The message echoed back
+- `message_length` (int) - Length of the message
+- `reward` (float) - Reward based on message length (length × 0.1)
+- `done` (bool) - Always False for echo environment
+- `metadata` (dict) - Additional info like step count
 
-## Dependencies
+### Reward
+The reward is calculated as: `message_length × 0.1`
+- "Hi" → reward: 0.2
+- "Hello, World!" → reward: 1.3
+- Empty message → reward: 0.0
 
-- `pydantic>=2.0.0`: Type validation and serialization
-- `pandas>=1.5.0`: Data manipulation
-- `scikit-learn>=1.3.0`: Machine learning models
-- `numpy>=1.24.0`: Numerical computing
-- `typing-extensions>=4.5.0`: Advanced type hints
+## Advanced Usage
 
----
+### Connecting to an Existing Server
+
+If you already have a Odse environment server running, you can connect directly:
+
+```python
+from odse import OdseEnv
+
+# Connect to existing server
+odseenv = OdseEnv(base_url="<ENV_HTTP_URL_HERE>")
+
+# Use as normal
+result = odseenv.reset()
+result = odseenv.step(OdseAction(message="Hello!"))
+```
+
+Note: When connecting to an existing server, `odseenv.close()` will NOT stop the server.
+
+### Using the Context Manager
+
+The client supports context manager usage for automatic connection management:
+
+```python
+from odse import OdseAction, OdseEnv
+
+# Connect with context manager (auto-connects and closes)
+with OdseEnv(base_url="http://localhost:8000") as env:
+    result = env.reset()
+    print(f"Reset: {result.observation.echoed_message}")
+    # Multiple steps with low latency
+    for msg in ["Hello", "World", "!"]:
+        result = env.step(OdseAction(message=msg))
+        print(f"Echoed: {result.observation.echoed_message}")
+```
+
+The client uses WebSocket connections for:
+- **Lower latency**: No HTTP connection overhead per request
+- **Persistent session**: Server maintains your environment state
+- **Efficient for episodes**: Better for many sequential steps
+
+### Concurrent WebSocket Sessions
+
+The server supports multiple concurrent WebSocket connections. To enable this,
+modify `server/app.py` to use factory mode:
+
+```python
+# In server/app.py - use factory mode for concurrent sessions
+app = create_app(
+    OdseEnvironment,  # Pass class, not instance
+    OdseAction,
+    OdseObservation,
+    max_concurrent_envs=4,  # Allow 4 concurrent sessions
+)
+```
+
+Then multiple clients can connect simultaneously:
+
+```python
+from odse import OdseAction, OdseEnv
+from concurrent.futures import ThreadPoolExecutor
+
+def run_episode(client_id: int):
+    with OdseEnv(base_url="http://localhost:8000") as env:
+        result = env.reset()
+        for i in range(10):
+            result = env.step(OdseAction(message=f"Client {client_id}, step {i}"))
+        return client_id, result.observation.message_length
+
+# Run 4 episodes concurrently
+with ThreadPoolExecutor(max_workers=4) as executor:
+    results = list(executor.map(run_episode, range(4)))
+```
+
+## Development & Testing
+
+### Direct Environment Testing
+
+Test the environment logic directly without starting the HTTP server:
+
+```bash
+# From the server directory
+python3 server/odse_environment.py
+```
+
+This verifies that:
+- Environment resets correctly
+- Step executes actions properly
+- State tracking works
+- Rewards are calculated correctly
+
+### Running Locally
+
+Run the server locally for development:
+
+```bash
+uvicorn server.app:app --reload
+```
+
+## Project Structure
+
+```
+odse/
+├── .dockerignore         # Docker build exclusions
+├── __init__.py            # Module exports
+├── README.md              # This file
+├── openenv.yaml           # OpenEnv manifest
+├── pyproject.toml         # Project metadata and dependencies
+├── uv.lock                # Locked dependencies (generated)
+├── client.py              # OdseEnv client
+├── models.py              # Action and Observation models
+└── server/
+    ├── __init__.py        # Server module exports
+    ├── odse_environment.py  # Core environment logic
+    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
+    └── Dockerfile         # Container image definition
+```
