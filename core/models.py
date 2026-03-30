@@ -174,7 +174,7 @@ class Observation(BaseModel):
     Provides the agent with everything it needs to decide its next action.
     """
 
-    columns: List[str] = Field(
+    columns: List[ColumnInfo] = Field(
         description = "Metadata for every column in the current dataset state"
     )
     sample_head: Dict[str, list] = Field(

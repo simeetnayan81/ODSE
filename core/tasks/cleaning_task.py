@@ -33,7 +33,7 @@ class CleaningTask(BaseTask):
     """Clean a dirty dataset by removing / imputing missing values."""
 
     TASK_TYPE = TaskType.DATA_CLEANING
-    SUPPORTED_ACTIONS = Set[str] = {"impute", "drop_columns", "drop_rows"}
+    SUPPORTED_ACTIONS: Set[str] = {"impute", "drop_columns", "drop_rows"}
 
     # Action application
 
@@ -82,7 +82,7 @@ class CleaningTask(BaseTask):
 
     def grade(self) -> Dict[str, Any]:
         score = 0.0
-        details = Dict[str, Any] =  {}
+        details: Dict[str, Any] = {}
         
         # 50% - no nulls remaining
         nulls = self.data_state.total_nulls

@@ -21,7 +21,7 @@ from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import LabelEncoder
 
 from ..data.data_manager import DataState
-from ..datas.datasets import DatasetConfig
+from ..data.datasets import DatasetConfig
 from ..models import (
     Action,
     ColumnInfo,
@@ -96,7 +96,7 @@ class BaseTask(ABC):
         if isinstance(action, SubmitAction):
             obs = self.build_observation()
             return StepResult(
-                observatiopn=obs,
+                observation=obs,
                 reward=0.0,
                 done=True,
                 info={"reason": "Submit"}
@@ -207,3 +207,49 @@ class BaseTask(ABC):
             goal_description=self.get_goal_description(),
             available_actions=sorted(self.SUPPORTED_ACTIONS | {"submit"})
         )
+    
+    # =====================================================================
+    # Proxy model accuracy  (shared by all tasks)
+    # =====================================================================
+
+    def calculate_accuracy(self) -> float:
+        """5-fold CV accuracy using a LogisticRegression proxy model.
+        
+        Only complete (non-null) rows are used.  Returns 0.0 when the
+        dataset is too small or the model fails.
+        """
+        df = self.data_state.df.dropna()
+        target = self.dataset_config.target_column
+        features = [
+            c for c in self.dataset_config.feature_columns if c in df.columns
+        ]
+
+        if len(df) < 10 or target not in df.columns or not features:
+            return 0.0
+
+        try:
+            X = df[features].copy()
+            y = df[target]
+
+            # Encode categorical / string columns
+            for col in X.columns:
+                if not pd.api.types.is_numeric_dtype(X[col]):
+                    le = LabelEncoder()
+                    X[col] = le.fit_transform(X[col].astype(str))
+
+            X_arr = X.values.astype(float)
+            n_folds = min(5, len(df))
+
+            model = LogisticRegression(
+                max_iter=1000,
+                random_state=self.seed,
+                solver="lbfgs",
+            )
+
+            scores = cross_val_score(
+                model, X_arr, y, cv=n_folds, scoring="accuracy",
+            )
+
+            return float(np.mean(scores))
+        except Exception:
+            return 0.0

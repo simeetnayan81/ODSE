@@ -1,6 +1,5 @@
 """ODSE task implementation"""
 
-from ODSE import __all__
 from .base_task import BaseTask
 from .cleaning_task import CleaningTask
 from .feature_engineering_task import FeatureEngineeringTask
