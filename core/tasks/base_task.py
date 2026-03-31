@@ -116,7 +116,7 @@ class BaseTask(ABC):
                     )
                 }
             )
-        
+        #can be optimized with prev acc
         old_accuracy = self.calculate_accuracy()
         
         # ---- Delegate to the concreate task ----------

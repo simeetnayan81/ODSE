@@ -1,207 +1,205 @@
-"""Pydantic models for ODSE (Open Data Science Environment).
+"""Pydantic models for the ODSE Sandbox Environment.
 
-Defines all action types, observations, step results, and configuration enums,
-Actions use a discriminated union pattern for type safety dispatch.
+Defines the two actions (RunCode, Submit), observations, step results,
+and supporting types for a code-execution sandbox where agents write
+and execute Python code to solve data-science tasks.
 
-To add a new action type:
-    1. Define a new ```BaseModel``` with a unique `action_type` Literal.
-    2. Add it to the `Action` union at the bottom of this file.
-    3. Register it in the relevant task's ``SUPPORTED_ACTIONS`` set.
+Architecture
+------------
+Instead of a fixed DSL with enumerated action types, the sandbox
+exposes only two actions:
+
+* ``RunCodeAction`` : execute arbitrary Python in a persistent namespace.
+* ``SubmitAction``  : submit predictions and terminate the episode.
+
+The observation gives the agent execution feedback (stdout/stderr),
+workspace state (variables, shapes), scoring context, and dataset
+metadata so it can plan its next code cell.
 """
 
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
 from pydantic import BaseModel, Field
 from typing_extensions import Annotated
 
+
+# ============================================================================
+# Enums
+# ============================================================================
+
+class ProblemType(str, Enum):
+    """Type of ML problem the agent must solve."""
+
+    CLASSIFICATION = "classification"
+    REGRESSION = "regression"
+
+
 class Difficulty(str, Enum):
-    """Difficulty levels for tasks and datasets."""
+    """Difficulty Level - controls dataset noise, nulls, and step budget."""
 
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
 
-class TaskType(str, Enum):
-    """Available task types in the ODSE.
 
-    Extend this enum when adding new task categories.
+class ExecutionStatus(str, Enum):
+    """Outcome of a single code execution."""
+
+    SUCCESS = "success"
+    ERROR = "error"
+    TIMEOUT = "timeout"
+
+
+# ============================================================================
+# Actions
+# ============================================================================
+
+class RunCodeAction(BaseModel):
+    """Execute Python code in the sandbox.
+
+    The code runs in a persistent namespace pre-loaded with:
+
+    * ``train_df``      : Training DataFrame (features **+** target)
+    * ``val_features``  : Validation features (target hidden)
+    * ``test_features`` : Test features (target hidden)
+    * ``target_column`` : Name of the target column (str)
+    * ``pd``, ``np``    : pandas and numpy
+    * ``evaluate(preds)`` : Score predictions against hidden **validation** labels
+
+    Variables persist across ``RunCode`` calls (notebook-style kernel).
+    Assign your **test-set** predictions to the variable ``predictions``
+    before calling ``SubmitAction``.
     """
 
-    DATA_CLEANING = "data_cleaning"
-    FEATURE_ENGINEERING = "feature_engineering"
-    #Future Extensions
-    #MODEL_TRAINING = "model_training"
+    action_type: Literal["run_code"] = Field(default="run_code", frozen=True)
+    code: str = Field(description="Python code to execute in the sandbox")
 
-
-# Actions(Data Cleaning)
- 
-class ImputeAction(BaseModel):
-    """Impute missing values in a column using a specified strategy."""
-
-    action_type: Literal["impute"] = Field(default="impute", frozen=True)
-    column: str = Field(description="Name of the column to impute")
-    strategy: Literal["mean", "median", "mode", "constant"] = Field(
-        description="Imputation strategy to use"
-    )
-    fill_value: Optional[Any] = Field(
-        default=None,
-        description="Value to use when strategy is 'constant'"
-    )
-
-class DropColumnAction(BaseModel):
-    """Drop an entire column from the dataset."""
-
-    action_type: Literal["drop_column"] = Field(default="drop_column", frozen=True)
-    column: str = Field(description="Name of the column to drop")
-
-class DropRowAction(BaseModel):
-    """Drop rows that contain null values in a specific column."""
-    
-    action_type: Literal["drop_row"] = Field(default="drop_row", frozen=True)
-    column: str = Field(description="Column whose null rows should be dropped")
-
-#
-# Actions(Feature Engineering)
-#
-
-class CreateInteractionAction(BaseModel):
-    """Create a new feature by multiplying two existing features."""
-
-    action_type: Literal["create_interaction"] = Field(
-        default="create_interaction", 
-        frozen=True
-    )
-    column_a: str = Field(description="First column")
-    column_b: str = Field(description="Second column")
-    new_column: str = Field(description="Name of the new interaction feature")
-
-class BinColumnAction(BaseModel):
-    """Discretize a numeric column into categorical bins."""
-
-    action_type: Literal["bin_column"] = Field(default="bin_column", frozen=True)
-    column: str = Field(description="Name of the column to bin")
-    n_bins: int = Field(description="Number of bins to create")
-    strategy: Literal['uniform', 'quantile', 'kmeans'] = Field(
-        default='quantile',
-        description="Binning strategy"
-    )
-
-class OneHotEncodeAction(BaseModel):
-    """One-hot encode a categorical column."""
-
-    action_type: Literal["one_hot_encode"] = Field(
-        default="one_hot_encode", 
-        frozen=True
-    )
-    column: str = Field(description="Categorical column to encode")
-    drop_original: bool = Field(
-        default=False,
-        description="Whether to drop the original column after encoding"
-    )
-
-class ScaleColumnAction(BaseModel):
-    """Scale a numeric column (standardize or min-max normalise)."""
-
-    action_type: Literal["scale_column"] = Field(default="scale_column", frozen=True)
-    column: str = Field(description="Numeric column to scale")
-    method: Literal["standard", "minmax"] = Field(
-        default="standard",
-        description="Scaling method"
-    )
-
-class LogTransformAction(BaseModel):
-    """Apply log(1 + |x|) transformation to a numeric column."""
-
-    action_type: Literal["log_transform"] = Field(
-        default="log_transform", 
-        frozen=True
-    )
-    column: str = Field(description="Numeric column to log-transform")
-
-
-#  Common Actions
 
 class SubmitAction(BaseModel):
-    """Submit the current state and terminate the episode."""
+    """Submit predictions and terminate the episode.
+
+    Reads the ``predictions`` variable from the sandbox namespace and
+    scores it against the **hidden test labels**. The variable must be
+    an array-like whose length matches ``test_features``.
+    """
 
     action_type: Literal["submit"] = Field(default="submit", frozen=True)
 
 
-
-# Action Union (discriminated)
-# To register a new action: define the model above and add it here
-
 Action = Annotated[
-    Union[
-        #Cleaning
-        ImputeAction,
-        DropColumnAction,
-        DropRowAction,
-        #Feature Engineering
-        CreateInteractionAction,
-        BinColumnAction,
-        OneHotEncodeAction,
-        ScaleColumnAction,
-        LogTransformAction,
-        #Common
-        SubmitAction
-    ],
-    Field(discriminator="action_type")
+    Union[RunCodeAction, SubmitAction],
+    Field(discriminator="action_type"),
 ]
 
 
-# Column Metadata (embedded inside Observation)
+# ============================================================================
+# Dataset / Column metadata
+# ============================================================================
 
-class ColumnInfo(BaseModel):
-    """Metadata for a single column in the dataset."""
+class ColumnSchema(BaseModel):
+    """Schema information for a single column in the dataset."""
 
     name: str
     dtype: str
     null_count: int = Field(ge=0)
-    null_percentage: float = Field(ge=0, le=100)
     is_numeric: bool
     unique_count: int = Field(ge=0)
-    #Future Extensions
-    #mean: Optional[float] = None
-    #std: Optional[float] = None
-    #min: Optional[float] = None
-    #max: Optional[float] = None 
+    sample_values: List[Any] = Field(default_factory=list, max_length=5)
+
+
+class DatasetInfo(BaseModel):
+    """Metadata about the dataset, provided to the agent on every observation."""
+
+    train_shape: Tuple[int, int]
+    val_shape: Tuple[int, int]
+    test_shape: Tuple[int, int]
+    target_column: str
+    problem_type: str  # "classification" or "regression"
+    metric: str  # primary metric name (e.g. "accuracy", "r2")
+    columns: List[ColumnSchema]
+    target_classes: Optional[List[Any]] = None  # classification only
+    target_stats: Optional[Dict[str, float]] = None  # regression only
+
+
+# ============================================================================
+# Namespace summary
+# ============================================================================
+
+class VariableInfo(BaseModel):
+    """Summary of one variable in the agent's sandbox namespace."""
+
+    name: str
+    type_name: str
+    shape: Optional[Tuple[int, ...]] = None
+    preview: str = Field(default="", max_length=500)
+
+
+# ============================================================================
+# Observation
+# ============================================================================
 
 class Observation(BaseModel):
-    """Observation returned by the environment.
-    Provides the agent with everything it needs to decide its next action.
-    """
+    """Observation returned after every ``reset()`` or ``step()``."""
 
-    columns: List[ColumnInfo] = Field(
-        description = "Metadata for every column in the current dataset state"
+    # - Execution result (empty on reset) ------------------------------------
+    stdout: str = Field(
+        default="",
+        description="Captured stdout from last code execution",
     )
-    sample_head: Dict[str, list] = Field(
-        description="First 5 rows of the dataset as {col: [values]}"
+    stderr: str = Field(
+        default="",
+        description="Captured stderr / traceback from last execution",
     )
-    shape: Tuple[int, int] = Field(
-        description="Shape of the dataset (rows, columns)"
+    execution_status: Optional[ExecutionStatus] = Field(
+        default=None,
+        description="Status of the last code execution (None on reset)",
     )
-    current_accuracy: float = Field(
-        ge=0.0, le=1.0, 
-        description="Proxy model accuracy (5-fold CV)"
-    )
-    step_count: int = Field(description = "Steps taken so far", ge=0)
-    nulls_remaining: int = Field(ge=0,  description="Total number of null values remaining in the dataset")
-    task_type: str = Field(description="Current task type identifier")
-    difficulty: str = Field(description="Current difficulty level")
-    goal_description: str = Field(description="Human-readable description of the task goal")
-    available_actions: List[str] = Field(
-        description="List of action types that are valid in the current state"
+    execution_time_ms: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Wall-clock time of last execution in milliseconds",
     )
 
+    # - Workspace state ------------------------------------------------------
+    namespace_summary: List[VariableInfo] = Field(
+        default_factory=list,
+        description="User-visible variables in the sandbox namespace",
+    )
+
+    # - Scoring --------------------------------------------------------------
+    validation_score: Optional[float] = Field(
+        default=None,
+        description="Latest validation score (from evaluate() or auto-detected)",
+    )
+    best_validation_score: Optional[float] = Field(
+        default=None,
+        description="Best validation score achieved this episode",
+    )
+
+    # - Episode context ------------------------------------------------------
+    step_count: int = Field(ge=0, description="Steps taken so far")
+    max_steps: int = Field(ge=1, description="Step budget for this episode")
+    dataset_info: DatasetInfo
+    task_description: str = Field(
+        description="Human-readable description of the agent's objective",
+    )
+    done: bool = Field(default=False, description="Whether the episode has ended")
+
+
+# ============================================================================
 # Step result
+# ============================================================================
 
 class StepResult(BaseModel):
-    """Result returned by ``env.step()``."""
+    """Result of a single ``env.step()`` call."""
 
     observation: Observation
-    reward: float = Field(description="Reward received for the action taken")
+    reward: float = Field(description="Scalar reward for this step")
     done: bool = Field(description="Whether the episode has terminated")
-    info: Dict[str, Any] = Field(default_factory=dict, description="Additional info for debugging or analysis")
+    info: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional diagnostics (scores, timing, breakdown, ...)",
+    )

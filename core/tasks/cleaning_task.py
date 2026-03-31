@@ -71,6 +71,8 @@ class CleaningTask(BaseTask):
 
     def is_done(self) -> bool:
         #TODO: Add more termination conditions
+        #Think more about total_nulls, maybe remove this condition, 
+        #If dataset has no rows/columns left, end the episode
         if self.data_state.total_nulls == 0:
             return True
         if self.step_count >= self.max_steps:

@@ -101,7 +101,7 @@ class FeatureEngineeringTask(BaseTask):
         action: Action,
     ) -> float:
         accuracy_gain = new_accuracy - old_accuracy
-        return accuracy_gain * 15.0 - 0.01
+        return accuracy_gain * 10.0 - 0.01
 
     # -------------------------------------------------------------------------
     # Termination

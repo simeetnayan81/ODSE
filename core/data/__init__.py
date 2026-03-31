@@ -1,11 +1,12 @@
-"""ODSE data management"""
+"""ODSE data sub-package dataset loading and train/val/test splitting."""
 
-from .data_manager import DataState
-from .datasets import DatasetConfig, load_dataset
-
+from .data_manager import DataSplit, create_data_split
+from .datasets import DatasetConfig, list_datasets, load_dataset
 
 __all__ = [
-    "DataState",
+    "DataSplit",
     "DatasetConfig",
-    "load_dataset"
+    "create_data_split",
+    "list_datasets",
+    "load_dataset",
 ]
