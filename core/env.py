@@ -31,6 +31,7 @@ from .data.data_manager import DataSplit, create_data_split
 from .data.datasets import DatasetConfig, load_dataset
 from .evaluator import compute_full_report, compute_metric
 from .executor import SandboxExecutor
+from core.docker_executor import DockerSandboxExecutor
 from .models import (
     Action,
     ColumnSchema,
@@ -45,6 +46,50 @@ from .models import (
     VariableInfo,
 )
 from .reward import compute_step_reward, compute_submit_reward
+
+
+
+
+class EvaluateFunctionWrapper:
+    """Pickleable wrapper for the evaluate function.
+    
+    This allows the evaluate function to be serialized and sent to the
+    Docker container where it can be reconstructed.
+    """
+    
+    def __init__(self, val_labels: pd.Series, problem_type: ProblemType, metric: str):
+        self.val_labels = val_labels.values
+        self.problem_type = problem_type
+        self.metric = metric
+        self.best_score = None
+    
+    def __call__(self, predictions) -> Dict[str, Any]:
+        """Score predictions against validation labels."""
+        preds = np.asarray(predictions)
+        if len(preds) != len(self.val_labels):
+            return {
+                "error": (
+                    f"Expected {len(self.val_labels)} predictions "
+                    f"(val_features length), got {len(preds)}"
+                )
+            }
+        
+        try:
+            primary = compute_metric(
+                self.val_labels, preds, self.problem_type, self.metric,
+            )
+            report = compute_full_report(
+                self.val_labels, preds, self.problem_type,
+            )
+            report["primary_metric"] = self.metric
+            report["primary_score"] = round(primary, 4)
+            
+            if self.best_score is None or primary > self.best_score:
+                self.best_score = primary
+            
+            return report
+        except Exception as exc:
+            return {"error": str(exc)}
 
 
 class ODSEnvironment:
@@ -141,7 +186,7 @@ class ODSEnvironment:
 
         # Internal state (populated on reset)
         self._data_split: Optional[DataSplit] = None
-        self._executor: Optional[SandboxExecutor] = None
+        self._executor: Optional[DockerSandboxExecutor] = None
         self._step_count: int = 0
         self._done: bool = False
         self._best_val_score: Optional[float] = None
@@ -163,7 +208,7 @@ class ODSEnvironment:
         )
 
         # Set up sandbox executor
-        self._executor = SandboxExecutor(
+        self._executor = DockerSandboxExecutor(
             timeout_seconds=self.timeout_seconds,
         )
         self._executor.setup_namespace(
@@ -430,61 +475,16 @@ class ODSEnvironment:
     # ========================================================================
 
     def _make_evaluate_fn(self):
-        """Create the ``evaluate()`` closure injected into the namespace.
+        """Create the ``evaluate()`` wrapper injected into the namespace.
 
-        Scores predictions against the **hidden validation labels**.
-        Also updates ``self._best_val_score`` as a side-effect so the
-        environment can track progress for reward shaping.
+        Returns a pickleable EvaluateFunctionWrapper instance that scores 
+        predictions against the hidden validation labels.
         """
-        val_labels = self._data_split.val_labels.copy()
-        problem_type = self.problem_type
-        metric = self.metric
-        env = self  # capture for side-effect updates
-
-        def evaluate(predictions) -> Dict[str, Any]:
-            """Score predictions against hidden validation labels.
-
-            Parameters
-            ----------
-            predictions : array-like
-                Predictions whose length must match ``val_features``.
-
-            Returns
-            -------
-            dict
-                Metric scores plus ``primary_metric`` and ``primary_score``.
-            """
-            preds = np.asarray(predictions)
-            if len(preds) != len(val_labels):
-                return {
-                    "error": (
-                        f"Expected {len(val_labels)} predictions "
-                        f"(val_features length), got {len(preds)}"
-                    )
-                }
-
-            try:
-                primary = compute_metric(
-                    val_labels.values, preds, problem_type, metric,
-                )
-                report = compute_full_report(
-                    val_labels.values, preds, problem_type,
-                )
-                report["primary_metric"] = metric
-                report["primary_score"] = round(primary, 4)
-
-                # Side-effect: let the environment know about the score
-                if (
-                    env._best_val_score is None
-                    or primary > env._best_val_score
-                ):
-                    env._best_val_score = primary
-
-                return report
-            except Exception as exc:
-                return {"error": str(exc)}
-
-        return evaluate
+        return EvaluateFunctionWrapper(
+            val_labels=self._data_split.val_labels,
+            problem_type=self.problem_type,
+            metric=self.metric,
+        )
 
     # ========================================================================
     # Internals
