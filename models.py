@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Literal, Optional
 from openenv.core.env_server.types import Action, Observation as OpenEnvObservation, State
 from pydantic import Field
 
-from .core.models import DatasetInfo, ExecutionStatus, VariableInfo
+from odse.core.models import DatasetInfo, ExecutionStatus, VariableInfo
 
 # ==============================================================================
 # Action

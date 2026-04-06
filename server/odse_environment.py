@@ -10,15 +10,9 @@ from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
 
-try:
-    from ..models import OdseAction, OdseObservation, OdseState
-except ImportError as e:
-    if "relative import" not in str(e) and "no known parent package" not in str(e):
-        raise
-    from models import OdseAction, OdseObservation, OdseState
-
-from ..core.env import ODSEnvironment
-from ..core.models import RunCodeAction, SubmitAction
+from odse.models import OdseAction, OdseObservation, OdseState
+from odse.core.env import ODSEnvironment
+from odse.core.models import RunCodeAction, SubmitAction
 
 
 class OdseEnvironment(Environment):
