@@ -31,7 +31,7 @@ from .data.data_manager import DataSplit, create_data_split
 from .data.datasets import DatasetConfig, load_dataset
 from .evaluator import compute_full_report, compute_metric
 from .executor import SandboxExecutor
-from core.docker_executor import DockerSandboxExecutor
+from .docker_executor import DockerSandboxExecutor
 from .models import (
     Action,
     ColumnSchema,
@@ -159,7 +159,7 @@ class ODSEnvironment:
         self.timeout_seconds = timeout_seconds
 
         # Load dataset config
-        self._dataset_config: DatasetConfig = load_dataset(dataset, difficulty)
+        self.dataset_config: DatasetConfig = load_dataset(dataset, difficulty)
 
         # Determine problem type
         if problem_type is not None:
@@ -169,7 +169,7 @@ class ODSEnvironment:
                 else problem_type
             )
         else:
-            self.problem_type = self._dataset_config.problem_type
+            self.problem_type = self.dataset_config.problem_type
 
         # Determine metric
         if metric is not None:
@@ -203,7 +203,7 @@ class ODSEnvironment:
 
         # Create train / val / test split
         self._data_split = create_data_split(
-            self._dataset_config,
+            self.dataset_config,
             seed=self.seed,
         )
 
@@ -215,7 +215,7 @@ class ODSEnvironment:
             train_df=self._data_split.train_df,
             val_features=self._data_split.val_features,
             test_features=self._data_split.test_features,
-            target_column=self._dataset_config.target_column,
+            target_column=self.dataset_config.target_column,
             evaluate_fn=self._make_evaluate_fn(),
         )
 
@@ -287,7 +287,11 @@ class ODSEnvironment:
             best_validation_score=self._best_val_score,
         )
 
-        obs = self._build_observation(done=True)
+        obs = self._build_observation(
+            done=True,
+            test_score=test_score,
+            test_report=test_report,
+            )
 
         return StepResult(
             observation=obs,
@@ -364,6 +368,8 @@ class ODSEnvironment:
             execution_time_ms=result.execution_time_ms,
             validation_score=curr_val_score,
             done=done,
+            test_score=None,
+            test_report=None,
         )
 
         return StepResult(
@@ -390,6 +396,8 @@ class ODSEnvironment:
         execution_time_ms: float = 0.0,
         validation_score: Optional[float] = None,
         done: bool = False,
+        test_score: Optional[float] = None,
+        test_report: Optional[Dict[str, Any]] = None,
     ) -> Observation:
         return Observation(
             stdout=stdout,
@@ -404,12 +412,14 @@ class ODSEnvironment:
             dataset_info=self._build_dataset_info(),
             task_description=self._build_task_description(),
             done=done,
+            test_score=test_score,
+            test_report=test_report
         )
 
     def _build_dataset_info(self) -> DatasetInfo:
         split = self._data_split
         train = split.train_df
-        cfg = self._dataset_config
+        cfg = self.dataset_config
 
         columns = []
         for col in train.columns:
@@ -453,7 +463,7 @@ class ODSEnvironment:
 
     def _build_task_description(self) -> str:
         pt = self.problem_type.value.upper()
-        tc = self._dataset_config.target_column
+        tc = self.dataset_config.target_column
         return (
             f"{pt} TASK: Build a model to predict '{tc}' using the "
             f"provided training data.\n\n"
