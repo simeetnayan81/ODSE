@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
-
+from pathlib import Path
 from .data.data_manager import DataSplit, create_data_split
 from .data.datasets import DatasetConfig, load_dataset
 from .evaluator import compute_full_report, compute_metric
@@ -48,6 +48,38 @@ from .models import (
 from .reward import compute_step_reward, compute_submit_reward
 
 
+def _inside_docker() -> bool:
+    """Detect if we're running inside a Docker container."""
+    import os
+    inside_docker = os.environ.get("AM_I_IN_A_DOCKER_CONTAINER", "false").lower() == "true"
+    return inside_docker
+
+def _ensure_sandbox_image(image: str = "odse-sandbox:latest") -> None:
+    """Builds the sandbox image if it doesn't exist"""
+    import logging
+    import subprocess
+    logger = logging.getLogger(__name__)
+    result = subprocess.run(
+        ["docker", "images", "-q", image],
+        capture_output=True,
+        text=True,
+        timeout=20
+    )
+    if result.stdout.strip():
+        logger.info(f"Docker image '{image}' already exists.")
+        return
+    
+    project_root = Path(__file__).resolve().parent.parent
+    dockerfile = project_root / "core" / "Dockerfile.sandbox"
+    if not dockerfile.exists():
+        raise FileNotFoundError(
+            f"Cannot auto-build sandbox image: {dockerfile} not found"
+        )
+    logger.info("Building sandbox image '%s' (first run only)...", image)
+    subprocess.run(
+        ["docker", "build", "-f", str(dockerfile), "-t", image, str(project_root)],
+    )
+    logger.info("Sandbox image '%s' built successfully", image)
 
 
 class EvaluateFunctionWrapper:
@@ -186,7 +218,7 @@ class ODSEnvironment:
 
         # Internal state (populated on reset)
         self._data_split: Optional[DataSplit] = None
-        self._executor: Optional[DockerSandboxExecutor] = None
+        self._executor: Optional[DockerSandboxExecutor | SandboxExecutor] = None
         self._step_count: int = 0
         self._done: bool = False
         self._best_val_score: Optional[float] = None
@@ -208,9 +240,19 @@ class ODSEnvironment:
         )
 
         # Set up sandbox executor
-        self._executor = DockerSandboxExecutor(
-            timeout_seconds=self.timeout_seconds,
-        )
+
+        #If we're already running inside Docker, 
+        #use the local sandbox executor. Otherwise, use the Docker-based one for isolation.
+        if _inside_docker():
+            print('Using a sandbox executor')
+            self._executor = SandboxExecutor()
+        else:
+            print('Using a docker based sandbox executor')
+            _ensure_sandbox_image()
+            self._executor = DockerSandboxExecutor(
+                timeout_seconds=self.timeout_seconds,
+            )
+        
         self._executor.setup_namespace(
             train_df=self._data_split.train_df,
             val_features=self._data_split.val_features,
