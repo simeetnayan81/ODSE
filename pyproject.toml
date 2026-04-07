@@ -48,5 +48,5 @@ server = "odse.server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["odse", "odse.server"]
-package-dir = { "odse" = ".", "odse.server" = "server" }
+packages = ["odse", "odse.server", "odse.core", "odse.core.data"]
+package-dir = { "odse" = ".", "odse.server" = "server" , "odse.core"="core", "odse.core.data" = "core/data"}

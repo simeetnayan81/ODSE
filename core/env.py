@@ -78,6 +78,8 @@ def _ensure_sandbox_image(image: str = "odse-sandbox:latest") -> None:
     logger.info("Building sandbox image '%s' (first run only)...", image)
     subprocess.run(
         ["docker", "build", "-f", str(dockerfile), "-t", image, str(project_root)],
+        check=True,
+        timeout=300
     )
     logger.info("Sandbox image '%s' built successfully", image)
 
