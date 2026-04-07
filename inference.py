@@ -119,7 +119,6 @@ def build_user_prompt(step: int, obs: Any, last_reward: float, history: List[str
 
 def get_model_message(client: OpenAI, step: int, obs: Any, last_reward: float, history: List[str]) -> str:
     user_prompt = build_user_prompt(step, obs, last_reward, history)
-    print(f"[DEBUG] User prompt:\n{user_prompt}\n", flush=True)
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
@@ -134,7 +133,6 @@ def get_model_message(client: OpenAI, step: int, obs: Any, last_reward: float, h
         text = (completion.choices[0].message.content or "").strip()
         return text if text else "[SUBMIT]"
     except Exception as exc:
-        print(f"[DEBUG] Model request failed: {exc}", flush=True)
         return "[SUBMIT]"
 
 
@@ -157,72 +155,72 @@ async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 
-    env = await OdseEnv.from_env("simeetnayan/odse", difficulty=TASK_NAME)
+    async with OdseEnv(base_url="https://simeetnayan-odse.hf.space") as env:
+        history: List[str] = []
+        rewards: List[float] = []
+        steps_taken = 0
+        score = 0.0
+        success = False
 
-    history: List[str] = []
-    rewards: List[float] = []
-    steps_taken = 0
-    score = 0.0
-    success = False
+        log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
-
-    try:
-        result = await env.reset()
-        obs = result.observation
-        last_reward = 0.0
-
-        # Safely loop up to the environment's max steps limit
-        max_steps = obs.max_steps if hasattr(obs, "max_steps") and obs.max_steps else 50
-        for step in range(1, max_steps + 1):
-            if result.done:
-                break
-
-            message = get_model_message(client, step, obs, last_reward, history)
-            print(f"[DEBUG] Model message:\n{message}\n", flush=True)
-            action = parse_action(message)
-            print(f"[DEBUG] Parsed action: {action}\n", flush=True)
-
-
-            result = await env.step(action)
-            obs = result.observation
-
-            reward = result.reward or 0.0
-            done = result.done
-            stderr = obs.stderr if obs.stderr else None
-            stdout = obs.stdout if obs.stdout else None
-
-
-
-            rewards.append(reward)
-            steps_taken = step
-            last_reward = reward
-
-            # Summarize the action for the required logs without spamming stdout
-            action_str = f"run_code({len(action.code or '')} bytes)" if action.action_type == "run_code" else "submit"
-            log_step(step=step, action=action_str, reward=reward, done=done, error=stderr)
-
-            history.append(f"Step {step}: {action.action_type} -> reward {reward:+.2f} done={done}, stderr={stderr}, stdout={stdout}")
-
-            if done:
-                break
-
-        # Fetch the test_score if available from info, otherwise cap it to the final reward
-        test_score = obs.info.get("test_score") if getattr(obs, "info", None) else None
-        if test_score is not None:
-            score = float(test_score)
-        else:
-            score = max(0.0, float(rewards[-1]) if rewards else 0.0)
-            
-        score = min(max(score, 0.1), 0.99)  # clamp to strict
-        success = score >= SUCCESS_SCORE_THRESHOLD
-
-    finally:
         try:
-            await env.close()
-        except Exception as e:
-            print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+            result = await env.reset(difficulty=TASK_NAME)
+            obs = result.observation
+            last_reward = 0.0
+
+            # Safely loop up to the environment's max steps limit
+            max_steps = obs.max_steps if hasattr(obs, "max_steps") and obs.max_steps else 50
+            for step in range(1, max_steps + 1):
+                if result.done:
+                    break
+
+                message = get_model_message(client, step, obs, last_reward, history)
+                action = parse_action(message)
+
+
+                result = await env.step(action)
+                obs = result.observation
+
+                reward = result.reward or 0.0
+                done = result.done
+                stderr = obs.stderr if obs.stderr else None
+                stdout = obs.stdout if obs.stdout else None
+
+
+
+                rewards.append(reward)
+                steps_taken = step
+                last_reward = reward
+                error_during_code_execution = None
+                if stderr and stderr.strip():
+                    error_during_code_execution = stderr.strip().splitlines()[-1]
+
+                # Summarize the action for the required logs without spamming stdout
+                action_str = f"run_code({len(action.code or '')} bytes)" if action.action_type == "run_code" else "submit"
+                log_step(step=step, action=action_str, reward=reward, done=done, error=error_during_code_execution)
+
+                history.append(f"Step {step}: {action.action_type} -> reward {reward:+.2f} done={done}, stderr={stderr}, stdout={stdout}")
+
+                if done:
+                    break
+
+            # Fetch the test_score if available from info, otherwise cap it to the final reward
+            test_score = obs.info.get("test_score") if getattr(obs, "info", None) else None
+            if test_score is not None:
+                score = float(test_score)
+            else:
+                score = max(0.0, float(rewards[-1]) if rewards else 0.0)
+                
+            score = min(max(score, 0.1), 0.99)  # clamp to strict
+            success = score >= SUCCESS_SCORE_THRESHOLD
+
+        finally:
+            try:
+                await env.close()
+            except Exception as e:
+                print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
+            log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":
