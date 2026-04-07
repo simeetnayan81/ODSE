@@ -66,6 +66,11 @@ def compute_step_reward(
     if has_predictions_now and not had_predictions_before:
         reward += FIRST_PREDICTION_BONUS
 
+
+    # Should we penalize if current predictions are worse than before? 
+    # Maybe not, since some steps may be exploratory and temporarily break the pipeline.
+    # Should we penalize for breaking existing predictions? Maybe not, since some feature engineering steps may temporarily break the pipeline.
+    # Let's just give a small step penalty and let the validation score guide the agent back on track.
     # Validation score improvement
     if curr_validation_score is not None and prev_validation_score is not None:
         delta = curr_validation_score - prev_validation_score

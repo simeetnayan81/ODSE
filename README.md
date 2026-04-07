@@ -1,5 +1,5 @@
 ---
-title: Odse Environment Server
+title: Open Data Science Server
 emoji: 🎪
 colorFrom: pink
 colorTo: yellow

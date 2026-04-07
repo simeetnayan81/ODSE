@@ -63,6 +63,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Set PYTHONPATH so imports work correctly
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
+ENV ENABLE_WEB_INTERFACE="true"
 ENV AM_I_IN_A_DOCKER_CONTAINER="true"
 
 # Health check
