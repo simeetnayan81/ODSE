@@ -4,4 +4,24 @@ type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+tasks:
+  - id: task_easy
+    description: "An easy data science task for evaluation."
+    difficulty: "easy"
+    grader:
+      type: llm
+      prompt_template: "The agent's final step reward is provided at the end of the episode. Return that exact reward as a float between 0.0 and 1.0. If the reward is negative, return 0.0."
+  
+  - id: task_medium
+    description: "A medium data science task for evaluation."
+    difficulty: "medium"
+    grader:
+      type: llm
+      prompt_template: "The agent's final step reward is provided at the end of the episode. Return that exact reward as a float between 0.0 and 1.0. If the reward is negative, return 0.0."
 
+  - id: task_hard
+    description: "A hard data science task for evaluation."
+    difficulty: "hard"
+    grader:
+      type: llm
+      prompt_template: "The agent's final step reward is provided at the end of the episode. Return that exact reward as a float between 0.0 and 1.0. If the reward is negative, return 0.0."

@@ -45,34 +45,35 @@ STDOUT FORMAT
 import asyncio
 import os
 import textwrap
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from openai import OpenAI
 
-from my_env_v4 import MyEnvV4Action, MyEnvV4Env
+from odse import OdseAction, OdseEnv
 IMAGE_NAME = os.getenv("IMAGE_NAME") # If you are using docker image 
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-TASK_NAME = os.getenv("MY_ENV_V4_TASK", "echo")
-BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "my_env_v4")
-MAX_STEPS = 8
+TASK_NAME = os.getenv("TASK_NAME", "easy")
+BENCHMARK = os.getenv("BENCHMARK", "odse")
 TEMPERATURE = 0.7
-MAX_TOKENS = 150
-SUCCESS_SCORE_THRESHOLD = 0.1  # normalized score in [0, 1]
-
-# Max possible reward: each token contributes 0.1, across all steps
-_MAX_REWARD_PER_STEP = MAX_TOKENS * 0.1
-MAX_TOTAL_REWARD = MAX_STEPS * _MAX_REWARD_PER_STEP
+MAX_TOKENS = 1024
+SUCCESS_SCORE_THRESHOLD = 0.5 #A model with random predictions should score around 0.1-0.5, so 0.5 is a reasonable threshold for success in this benchmark.
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
-    You are interacting with a simple echo environment.
-    Each turn you must send a message. The environment will echo it back.
-    Reward is proportional to message length: reward = len(message) * 0.1
-    Your goal is to maximize total reward by sending meaningful, substantive messages.
-    Reply with exactly one message string — no quotes, no prefixes, just the message text.
+    You are an expert data scientist agent interacting with a Python execution sandbox.
+    Your goal is to solve the given data science task, maximize the evaluation metric, and finally submit your predictions.
+
+    You can take two types of actions:
+    1. Execute Python code: Write your code inside ```python ... ``` blocks.
+       The sandbox persists variables across steps. Pre-loaded variables include `train_df`, `val_features`, `test_features`, and `target_column`.
+       NOTE: This is a headless Python script, NOT an interactive Jupyter notebook. You MUST use `print()` if you want to see the output of any variable or dataframe.
+       Use `evaluate(predictions)` to check your validation score.
+       Assign your test-set predictions to the variable `predictions` (matching test_features length) before submitting.
+
+    2. Submit: When your `predictions` variable is ready, output exactly the word [SUBMIT] to finish the task.
     """
 ).strip()
 
@@ -95,22 +96,30 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
 
 
-def build_user_prompt(step: int, last_echoed: str, last_reward: float, history: List[str]) -> str:
+def build_user_prompt(step: int, obs: Any, last_reward: float, history: List[str]) -> str:
     history_block = "\n".join(history[-4:]) if history else "None"
     return textwrap.dedent(
         f"""
         Step: {step}
-        Last echoed message: {last_echoed!r}
-        Last reward: {last_reward:.2f}
-        Previous steps:
+        Task Description: {obs.task_description}
+        Latest Execution Status: {obs.execution_status}
+        Stdout: {obs.stdout}
+        Stderr: {obs.stderr}
+        Validation Score: {obs.validation_score}
+        Best Validation Score: {obs.best_validation_score}
+        Last step reward: {last_reward:.2f}
+        
+        Previous steps summary:
         {history_block}
-        Send your next message.
+        
+        Decide your next action. Provide Python code in a ```python ... ``` block to explore or train, or output [SUBMIT] if your `predictions` variable is ready.
         """
     ).strip()
 
 
-def get_model_message(client: OpenAI, step: int, last_echoed: str, last_reward: float, history: List[str]) -> str:
-    user_prompt = build_user_prompt(step, last_echoed, last_reward, history)
+def get_model_message(client: OpenAI, step: int, obs: Any, last_reward: float, history: List[str]) -> str:
+    user_prompt = build_user_prompt(step, obs, last_reward, history)
+    print(f"[DEBUG] User prompt:\n{user_prompt}\n", flush=True)
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
@@ -123,16 +132,32 @@ def get_model_message(client: OpenAI, step: int, last_echoed: str, last_reward: 
             stream=False,
         )
         text = (completion.choices[0].message.content or "").strip()
-        return text if text else "hello"
+        return text if text else "[SUBMIT]"
     except Exception as exc:
         print(f"[DEBUG] Model request failed: {exc}", flush=True)
-        return "hello"
+        return "[SUBMIT]"
+
+
+def parse_action(text: str) -> OdseAction:
+    if "[SUBMIT]" in text.upper():
+        return OdseAction(action_type="submit")
+    import re
+    code = text
+    code = re.sub("```python", "", code)
+    code = re.sub("```", "", code)
+    code = code.strip()
+            
+    if not code.strip():
+        code = "# No code provided by model"
+        
+    return OdseAction(action_type="run_code", code=code)
 
 
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    env = await MyEnvV4Env.from_docker_image(IMAGE_NAME)
+
+    env = await OdseEnv.from_env("simeetnayan/odse", difficulty=TASK_NAME)
 
     history: List[str] = []
     rewards: List[float] = []
@@ -143,37 +168,53 @@ async def main() -> None:
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        result = await env.reset() # OpenENV.reset()
-        last_echoed = result.observation.echoed_message
+        result = await env.reset()
+        obs = result.observation
         last_reward = 0.0
 
-        for step in range(1, MAX_STEPS + 1):
+        # Safely loop up to the environment's max steps limit
+        max_steps = obs.max_steps if hasattr(obs, "max_steps") and obs.max_steps else 50
+        for step in range(1, max_steps + 1):
             if result.done:
                 break
 
-            message = get_model_message(client, step, last_echoed, last_reward, history)
+            message = get_model_message(client, step, obs, last_reward, history)
+            print(f"[DEBUG] Model message:\n{message}\n", flush=True)
+            action = parse_action(message)
+            print(f"[DEBUG] Parsed action: {action}\n", flush=True)
 
-            result = await env.step(MyEnvV4Action(message=message))
+
+            result = await env.step(action)
             obs = result.observation
 
             reward = result.reward or 0.0
             done = result.done
-            error = None
+            stderr = obs.stderr if obs.stderr else None
+            stdout = obs.stdout if obs.stdout else None
+
+
 
             rewards.append(reward)
             steps_taken = step
-            last_echoed = obs.echoed_message
             last_reward = reward
 
-            log_step(step=step, action=message, reward=reward, done=done, error=error)
+            # Summarize the action for the required logs without spamming stdout
+            action_str = f"run_code({len(action.code or '')} bytes)" if action.action_type == "run_code" else "submit"
+            log_step(step=step, action=action_str, reward=reward, done=done, error=stderr)
 
-            history.append(f"Step {step}: {message!r} -> reward {reward:+.2f}")
+            history.append(f"Step {step}: {action.action_type} -> reward {reward:+.2f} done={done}, stderr={stderr}, stdout={stdout}")
 
             if done:
                 break
 
-        score = sum(rewards) / MAX_TOTAL_REWARD if MAX_TOTAL_REWARD > 0 else 0.0
-        score = min(max(score, 0.0), 1.0)  # clamp to [0, 1]
+        # Fetch the test_score if available from info, otherwise cap it to the final reward
+        test_score = obs.info.get("test_score") if getattr(obs, "info", None) else None
+        if test_score is not None:
+            score = float(test_score)
+        else:
+            score = max(0.0, float(rewards[-1]) if rewards else 0.0)
+            
+        score = min(max(score, 0.1), 0.99)  # clamp to strict
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     finally:

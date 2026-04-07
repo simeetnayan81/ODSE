@@ -5,6 +5,7 @@ Wraps the core ``ODSEnvironment`` in the OpenEnv ``Environment`` interface
 so it can be served over HTTP / WebSocket via the standard OpenEnv server.
 """
 
+import random
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -36,7 +37,7 @@ class OdseEnvironment(Environment):
 
     def __init__(
         self,
-        dataset: str = "breast_cancer",
+        dataset: Optional[str] = None,
         difficulty: str = "easy",
         problem_type: Optional[str] = None,
         metric: Optional[str] = None,
@@ -73,6 +74,19 @@ class OdseEnvironment(Environment):
         p_type = kwargs.get("problem_type", self._problem_type)
         metric = kwargs.get("metric", self._metric)
         max_steps = kwargs.get("max_steps", self._max_steps)
+
+        # Randomly select a dataset and corresponding problem type if not specified
+        if dataset is None:
+            available_tasks = [
+                ("breast_cancer", "classification"),
+                ("iris", "classification"),
+                ("wine", "classification"),
+                ("house_prices", "regression"),
+            ]
+            if seed is not None:
+                dataset, p_type = random.Random(seed).choice(available_tasks)
+            else:
+                dataset, p_type = random.choice(available_tasks)
 
         self._core_env = ODSEnvironment(
             dataset=dataset,
