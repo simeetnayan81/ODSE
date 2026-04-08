@@ -50,18 +50,17 @@ from typing import Any, List, Optional
 from openai import OpenAI
 
 from odse import OdseAction, OdseEnv
-from odse.graders import EasyGrader, MediumGrader, HardGrader
+from odse.graders import grade_easy, grade_medium, grade_hard
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") # If you are using docker image 
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-TASK_NAME = os.getenv("TASK_NAME", "task_easy")
 BENCHMARK = os.getenv("BENCHMARK", "odse")
 TEMPERATURE = 0.7
 MAX_TOKENS = 1024
-SUCCESS_SCORE_THRESHOLD = 0.5 #A model with random predictions should score around 0.1-0.5, so 0.5 is a reasonable threshold for success in this benchmark.
+SUCCESS_SCORE_THRESHOLD = 0.5
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -152,24 +151,25 @@ def parse_action(text: str) -> OdseAction:
         
     return OdseAction(action_type="run_code", code=code)
 
+async def run_individual_task(client, TASK_NAME: str) -> None:
 
-async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-
-    grader = EasyGrader()  # Default grader
+    grader = grade_easy  # Default grader
     difficulty = "easy"
     if TASK_NAME == "task_easy":
-        grader = EasyGrader()
+        grader = grade_easy
         difficulty = "easy"
         SUCCESS_SCORE_THRESHOLD = 0.5
+        max_steps = 15
     elif TASK_NAME == "task_medium":
-        grader = MediumGrader()
+        grader = grade_medium
         difficulty = "medium"
         SUCCESS_SCORE_THRESHOLD = 0.75
+        max_steps = 20
     elif TASK_NAME == "task_hard":
-        grader = HardGrader()
+        grader = grade_hard
         difficulty = "hard"
         SUCCESS_SCORE_THRESHOLD = 0.9
+        max_steps = 30
     else:
         raise ValueError(f"Unknown task name: {TASK_NAME}")
     
@@ -185,12 +185,10 @@ async def main() -> None:
         log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
         try:
-            result = await env.reset(difficulty=difficulty)
+            result = await env.reset(difficulty=difficulty, max_steps=max_steps)
             obs = result.observation
             last_reward = 0.0
 
-            # Safely loop up to the environment's max steps limit
-            max_steps = obs.max_steps if hasattr(obs, "max_steps") and obs.max_steps else 50
             for step in range(1, max_steps + 1):
                 if result.done:
                     break
@@ -225,7 +223,7 @@ async def main() -> None:
                 if done:
                     break
 
-            score =  grader.grade(obs)
+            score =  grader(obs)
                 
             score = max(0.01, min(0.99, score))  # clamp to strict
             success = score >= SUCCESS_SCORE_THRESHOLD
@@ -234,8 +232,27 @@ async def main() -> None:
             try:
                 await env.close()
             except Exception as e:
-                print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
+                pass
             log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    
+async def main() -> None:
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    tasks = ["task_easy", "task_medium", "task_hard"]
+    failed_tasks = []
+    for task in tasks:
+        try:
+            await run_individual_task(client, task)
+        except Exception as e:
+            failed_tasks.append(task)
+    #Retry one time
+    for task in failed_tasks:
+        try:
+            await run_individual_task(client, task)
+        except Exception as e:
+            pass
+        
+
+
 
 
 if __name__ == "__main__":

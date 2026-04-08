@@ -19,11 +19,11 @@ from typing import Optional
 
 # -- Hyperparameters (tune as needed) ----------------------------------------
 
-STEP_PENALTY: float = -0.01
-CODE_SUCCESS_BONUS: float = 0.05
-CODE_ERROR_PENALTY: float = -0.05
+STEP_PENALTY: float = -0.05
+CODE_SUCCESS_BONUS: float = 0.1
+CODE_ERROR_PENALTY: float = -0.25
 FIRST_PREDICTION_BONUS: float = 0.1
-VALIDATION_IMPROVEMENT_SCALE: float = 5.0
+VALIDATION_IMPROVEMENT_SCALE: float = 2.0
 
 # ============================================================================
 # Dense reward (per RunCode step)
@@ -62,6 +62,9 @@ def compute_step_reward(
     # Code execution outcome
     reward += CODE_SUCCESS_BONUS if code_succeeded else CODE_ERROR_PENALTY
 
+    if not code_succeeded:
+        return max(min(reward, 1.0), -1.0)
+
     # First time producing predictions
     if has_predictions_now and not had_predictions_before:
         reward += FIRST_PREDICTION_BONUS
@@ -77,7 +80,7 @@ def compute_step_reward(
         if delta > 0:
             reward += delta * VALIDATION_IMPROVEMENT_SCALE
 
-    return reward
+    return max(min(reward, 1.0), -1.0)
 
 # ============================================================================
 # Sparse reward (on Submit)
