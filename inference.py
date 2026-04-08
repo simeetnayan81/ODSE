@@ -50,12 +50,14 @@ from typing import Any, List, Optional
 from openai import OpenAI
 
 from odse import OdseAction, OdseEnv
+from odse.graders import EasyGrader, MediumGrader, HardGrader
+
 IMAGE_NAME = os.getenv("IMAGE_NAME") # If you are using docker image 
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-TASK_NAME = os.getenv("TASK_NAME", "easy")
+TASK_NAME = os.getenv("TASK_NAME", "task_easy")
 BENCHMARK = os.getenv("BENCHMARK", "odse")
 TEMPERATURE = 0.7
 MAX_TOKENS = 1024
@@ -154,6 +156,24 @@ def parse_action(text: str) -> OdseAction:
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
+    grader = EasyGrader()  # Default grader
+    difficulty = "easy"
+    if TASK_NAME == "task_easy":
+        grader = EasyGrader()
+        difficulty = "easy"
+        SUCCESS_SCORE_THRESHOLD = 0.5
+    elif TASK_NAME == "task_medium":
+        grader = MediumGrader()
+        difficulty = "medium"
+        SUCCESS_SCORE_THRESHOLD = 0.75
+    elif TASK_NAME == "task_hard":
+        grader = HardGrader()
+        difficulty = "hard"
+        SUCCESS_SCORE_THRESHOLD = 0.9
+    else:
+        raise ValueError(f"Unknown task name: {TASK_NAME}")
+    
+
 
     async with OdseEnv(base_url="https://simeetnayan-odse.hf.space") as env:
         history: List[str] = []
@@ -165,7 +185,7 @@ async def main() -> None:
         log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
         try:
-            result = await env.reset(difficulty=TASK_NAME)
+            result = await env.reset(difficulty=difficulty)
             obs = result.observation
             last_reward = 0.0
 
@@ -205,14 +225,9 @@ async def main() -> None:
                 if done:
                     break
 
-            # Fetch the test_score if available from info, otherwise cap it to the final reward
-            test_score = obs.info.get("test_score") if getattr(obs, "info", None) else None
-            if test_score is not None:
-                score = float(test_score)
-            else:
-                score = max(0.0, float(rewards[-1]) if rewards else 0.0)
+            score =  grader.grade(obs)
                 
-            score = min(max(score, 0.1), 0.99)  # clamp to strict
+            score = max(0.01, min(0.99, score))  # clamp to strict
             success = score >= SUCCESS_SCORE_THRESHOLD
 
         finally:
