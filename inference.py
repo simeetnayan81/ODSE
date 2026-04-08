@@ -52,7 +52,7 @@ from openai import OpenAI
 from odse import OdseAction, OdseEnv
 from odse.graders import grade_easy, grade_medium, grade_hard
 
-IMAGE_NAME = os.getenv("IMAGE_NAME") # If you are using docker image 
+IMAGE_NAME = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME") # If you are using docker image 
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
@@ -159,81 +159,81 @@ async def run_individual_task(client, TASK_NAME: str) -> None:
         grader = grade_easy
         difficulty = "easy"
         SUCCESS_SCORE_THRESHOLD = 0.5
-        max_steps = 15
+        max_steps = 2
     elif TASK_NAME == "task_medium":
         grader = grade_medium
         difficulty = "medium"
         SUCCESS_SCORE_THRESHOLD = 0.75
-        max_steps = 20
+        max_steps = 2
     elif TASK_NAME == "task_hard":
         grader = grade_hard
         difficulty = "hard"
         SUCCESS_SCORE_THRESHOLD = 0.9
-        max_steps = 30
+        max_steps = 2
     else:
         raise ValueError(f"Unknown task name: {TASK_NAME}")
     
 
 
-    async with OdseEnv(base_url="https://simeetnayan-odse.hf.space") as env:
-        history: List[str] = []
-        rewards: List[float] = []
-        steps_taken = 0
-        score = 0.0
-        success = False
+    env = await OdseEnv.from_docker_image(IMAGE_NAME)
+    history: List[str] = []
+    rewards: List[float] = []
+    steps_taken = 0
+    score = 0.0
+    success = False
 
-        log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
-        try:
-            result = await env.reset(difficulty=difficulty, max_steps=max_steps)
+    try:
+        result = await env.reset(difficulty=difficulty, max_steps=max_steps)
+        obs = result.observation
+        last_reward = 0.0
+
+        for step in range(1, max_steps + 1):
+            if result.done:
+                break
+
+            message = get_model_message(client, step, obs, last_reward, history)
+            action = parse_action(message)
+
+
+            result = await env.step(action)
             obs = result.observation
-            last_reward = 0.0
 
-            for step in range(1, max_steps + 1):
-                if result.done:
-                    break
-
-                message = get_model_message(client, step, obs, last_reward, history)
-                action = parse_action(message)
-
-
-                result = await env.step(action)
-                obs = result.observation
-
-                reward = result.reward or 0.0
-                done = result.done
-                stderr = obs.stderr if obs.stderr else None
-                stdout = obs.stdout if obs.stdout else None
+            reward = result.reward or 0.0
+            done = result.done
+            stderr = obs.stderr if obs.stderr else None
+            stdout = obs.stdout if obs.stdout else None
 
 
 
-                rewards.append(reward)
-                steps_taken = step
-                last_reward = reward
-                error_during_code_execution = None
-                if stderr and stderr.strip():
-                    error_during_code_execution = stderr.strip().splitlines()[-1]
+            rewards.append(reward)
+            steps_taken = step
+            last_reward = reward
+            error_during_code_execution = None
+            if stderr and stderr.strip():
+                error_during_code_execution = stderr.strip().splitlines()[-1]
 
-                # Summarize the action for the required logs without spamming stdout
-                action_str = f"run_code({len(action.code or '')} bytes)" if action.action_type == "run_code" else "submit"
-                log_step(step=step, action=action_str, reward=reward, done=done, error=error_during_code_execution)
+            # Summarize the action for the required logs without spamming stdout
+            action_str = f"run_code({len(action.code or '')} bytes)" if action.action_type == "run_code" else "submit"
+            log_step(step=step, action=action_str, reward=reward, done=done, error=error_during_code_execution)
 
-                history.append(f"Step {step}: {action.action_type} -> reward {reward:+.2f} done={done}, stderr={stderr}, stdout={stdout}")
+            history.append(f"Step {step}: {action.action_type} -> reward {reward:+.2f} done={done}, stderr={stderr}, stdout={stdout}")
 
-                if done:
-                    break
+            if done:
+                break
 
-            score =  grader(obs)
-                
-            score = max(0.01, min(0.99, score))  # clamp to strict
-            success = score >= SUCCESS_SCORE_THRESHOLD
+        score =  grader(obs)
+            
+        score = max(0.01, min(0.99, score))  # clamp to strict
+        success = score >= SUCCESS_SCORE_THRESHOLD
 
-        finally:
-            try:
-                await env.close()
-            except Exception as e:
-                pass
-            log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    finally:
+        try:
+            await env.close()
+        except Exception as e:
+            pass
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
     
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
