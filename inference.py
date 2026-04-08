@@ -20,7 +20,7 @@ MANDATORY
 STDOUT FORMAT
 - The script must emit exactly three line types to stdout, in this order:
 
-    [START] task=<task_name> env=<benchmark> model=<model_name>
+    [START] task=<task_id> env=<benchmark> model=<model_name>
     [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
     [END]   success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
 
@@ -42,7 +42,6 @@ STDOUT FORMAT
     [END] success=true steps=3 score=1.00 rewards=0.00,0.00,1.00
 """
 
-import asyncio
 import os
 import textwrap
 from typing import Any, List, Optional
@@ -50,10 +49,11 @@ from typing import Any, List, Optional
 from openai import OpenAI
 
 from odse import OdseAction, OdseEnv
-from odse.graders import grade_easy, grade_medium, grade_hard
+from odse.graders import EasyGrader, MediumGrader, HardGrader
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME") # If you are using docker image 
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "https://simeetnayan-odse.hf.space")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
@@ -151,109 +151,109 @@ def parse_action(text: str) -> OdseAction:
         
     return OdseAction(action_type="run_code", code=code)
 
-async def run_individual_task(client, TASK_NAME: str) -> None:
 
-    grader = grade_easy  # Default grader
+def run_individual_task(client, task_id: str) -> None:
+
+    grader = EasyGrader()  # Default grader
     difficulty = "easy"
-    if TASK_NAME == "task_easy":
-        grader = grade_easy
+    if task_id == "task_easy":
+        grader = EasyGrader()
         difficulty = "easy"
         SUCCESS_SCORE_THRESHOLD = 0.5
         max_steps = 15
-    elif TASK_NAME == "task_medium":
-        grader = grade_medium
+    elif task_id == "task_medium":
+        grader = MediumGrader()
         difficulty = "medium"
         SUCCESS_SCORE_THRESHOLD = 0.75
         max_steps = 20
-    elif TASK_NAME == "task_hard":
-        grader = grade_hard
+    elif task_id == "task_hard":
+        grader = HardGrader()
         difficulty = "hard"
         SUCCESS_SCORE_THRESHOLD = 0.9
         max_steps = 30
     else:
-        raise ValueError(f"Unknown task name: {TASK_NAME}")
+        raise ValueError(f"Unknown task name: {task_id}")
     
 
-
-    env = await OdseEnv.from_docker_image(IMAGE_NAME)
+    if IMAGE_NAME:
+        base_client = OdseEnv.from_docker_image(IMAGE_NAME)
+    else:
+        base_client = OdseEnv(base_url=ENV_BASE_URL)
+        
     history: List[str] = []
     rewards: List[float] = []
     steps_taken = 0
     score = 0.0
     success = False
 
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
-
-    try:
-        result = await env.reset(difficulty=difficulty, max_steps=max_steps)
-        obs = result.observation
-        last_reward = 0.0
-
-        for step in range(1, max_steps + 1):
-            if result.done:
-                break
-
-            message = get_model_message(client, step, obs, last_reward, history)
-            action = parse_action(message)
-
-
-            result = await env.step(action)
-            obs = result.observation
-
-            reward = result.reward or 0.0
-            done = result.done
-            stderr = obs.stderr if obs.stderr else None
-            stdout = obs.stdout if obs.stdout else None
-
-
-
-            rewards.append(reward)
-            steps_taken = step
-            last_reward = reward
-            error_during_code_execution = None
-            if stderr and stderr.strip():
-                error_during_code_execution = stderr.strip().splitlines()[-1]
-
-            # Summarize the action for the required logs without spamming stdout
-            action_str = f"run_code({len(action.code or '')} bytes)" if action.action_type == "run_code" else "submit"
-            log_step(step=step, action=action_str, reward=reward, done=done, error=error_during_code_execution)
-
-            history.append(f"Step {step}: {action.action_type} -> reward {reward:+.2f} done={done}, stderr={stderr}, stdout={stdout}")
-
-            if done:
-                break
-
-        score =  grader(obs)
-            
-        score = max(0.01, min(0.99, score))  # clamp to strict
-        success = score >= SUCCESS_SCORE_THRESHOLD
-
-    finally:
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+    with base_client.sync() as env:
         try:
-            await env.close()
-        except Exception as e:
-            pass
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+            result = env.reset(difficulty=difficulty, max_steps=max_steps)
+            obs = result.observation
+            last_reward = 0.0
+
+            for step in range(1, max_steps + 1):
+                if result.done:
+                    break
+
+                message = get_model_message(client, step, obs, last_reward, history)
+                action = parse_action(message)
+
+                result = env.step(action)
+                obs = result.observation
+
+                reward = result.reward or 0.0
+                done = result.done
+                stderr = obs.stderr if obs.stderr else None
+                stdout = obs.stdout if obs.stdout else None
+
+                rewards.append(reward)
+                steps_taken = step
+                last_reward = reward
+                error_during_code_execution = None
+                if stderr and stderr.strip():
+                    error_during_code_execution = stderr.strip().splitlines()[-1]
+
+                # Summarize the action for the required logs without spamming stdout
+                action_str = f"run_code({len(action.code or '')} bytes)" if action.action_type == "run_code" else "submit"
+                log_step(step=step, action=action_str, reward=reward, done=done, error=error_during_code_execution)
+
+                history.append(f"Step {step}: {action.action_type} -> reward {reward:+.2f} done={done}, stderr={stderr}, stdout={stdout}")
+
+                if done:
+                    break
+
+            score = grader(obs)
+                
+            score = max(0.01, min(0.99, score))  # clamp to strict
+            success = score >= SUCCESS_SCORE_THRESHOLD
+
+        finally:
+            try:
+                env.close()
+            except Exception as e:
+                pass
+            log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
     
-async def main() -> None:
+
+def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     tasks = ["task_easy", "task_medium", "task_hard"]
     failed_tasks = []
+    
     for task in tasks:
         try:
-            await run_individual_task(client, task)
+            run_individual_task(client, task)
         except Exception as e:
             failed_tasks.append(task)
-    #Retry one time
+            
+    # Retry one time
     for task in failed_tasks:
         try:
-            await run_individual_task(client, task)
+            run_individual_task(client, task)
         except Exception as e:
             pass
-        
-
-
-
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
