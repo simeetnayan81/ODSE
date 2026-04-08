@@ -159,17 +159,17 @@ async def run_individual_task(client, TASK_NAME: str) -> None:
         grader = grade_easy
         difficulty = "easy"
         SUCCESS_SCORE_THRESHOLD = 0.5
-        max_steps = 2
+        max_steps = 15
     elif TASK_NAME == "task_medium":
         grader = grade_medium
         difficulty = "medium"
         SUCCESS_SCORE_THRESHOLD = 0.75
-        max_steps = 2
+        max_steps = 20
     elif TASK_NAME == "task_hard":
         grader = grade_hard
         difficulty = "hard"
         SUCCESS_SCORE_THRESHOLD = 0.9
-        max_steps = 2
+        max_steps = 30
     else:
         raise ValueError(f"Unknown task name: {TASK_NAME}")
     
