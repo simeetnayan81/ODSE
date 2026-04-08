@@ -42,6 +42,7 @@ STDOUT FORMAT
     [END] success=true steps=3 score=1.00 rewards=0.00,0.00,1.00
 """
 
+import asyncio
 import os
 import textwrap
 from typing import Any, List, Optional
@@ -152,31 +153,31 @@ def parse_action(text: str) -> OdseAction:
     return OdseAction(action_type="run_code", code=code)
 
 
-def run_individual_task(client, task_id: str) -> None:
+async def run_individual_task(client, task_id: str) -> None:
 
     grader = EasyGrader()  # Default grader
     difficulty = "easy"
+    max_steps = 5   
     if task_id == "task_easy":
         grader = EasyGrader()
         difficulty = "easy"
         SUCCESS_SCORE_THRESHOLD = 0.5
-        max_steps = 15
+        max_steps = 5
     elif task_id == "task_medium":
         grader = MediumGrader()
         difficulty = "medium"
         SUCCESS_SCORE_THRESHOLD = 0.75
-        max_steps = 20
+        max_steps = 5
     elif task_id == "task_hard":
         grader = HardGrader()
         difficulty = "hard"
         SUCCESS_SCORE_THRESHOLD = 0.9
-        max_steps = 30
+        max_steps = 5
     else:
         raise ValueError(f"Unknown task name: {task_id}")
     
     try:
         
-        base_client = OdseEnv(base_url=ENV_BASE_URL)    
         history: List[str] = []
         rewards: List[float] = []
         steps_taken = 0
@@ -184,8 +185,8 @@ def run_individual_task(client, task_id: str) -> None:
         success = False
 
         log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-        with base_client.sync() as env:
-            result = env.reset(difficulty=difficulty, max_steps=max_steps)
+        async with OdseEnv(base_url=ENV_BASE_URL) as env:
+            result = await env.reset(difficulty=difficulty, max_steps=max_steps)
             obs = result.observation
             last_reward = 0.0
 
@@ -196,7 +197,7 @@ def run_individual_task(client, task_id: str) -> None:
                 message = get_model_message(client, step, obs, last_reward, history)
                 action = parse_action(message)
 
-                result = env.step(action)
+                result = await env.step(action)
                 obs = result.observation
 
                 reward = result.reward or 0.0
@@ -225,23 +226,26 @@ def run_individual_task(client, task_id: str) -> None:
             score = max(0.01, min(0.99, score))  # clamp to strict
             success = score >= SUCCESS_SCORE_THRESHOLD
             try:
-                env.close()
+                await env.close()
             except Exception as e:
+                print(f"Error during closing env: {e}")
                 pass
+    except Exception as exc:
+        print(f"Error during task execution: {exc}")
     finally:
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
     
 
-def main() -> None:
+async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     tasks = ["task_easy", "task_medium", "task_hard"]
     
     for task in tasks:
         try:
-            run_individual_task(client, task)
+            await run_individual_task(client, task)
         except Exception as e:
-            pass
+            print(f"Error during task execution: {e}")
     
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
