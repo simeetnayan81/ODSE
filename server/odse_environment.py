@@ -81,7 +81,9 @@ class OdseEnvironment(Environment):
                 ("breast_cancer", "classification"),
                 ("iris", "classification"),
                 ("wine", "classification"),
-                ("house_prices", "regression"),
+                ("house_price", "regression"),
+                ('synth_cls', 'classification'),
+                ('regression', 'regression')
             ]
             if seed is not None:
                 dataset, p_type = random.Random(seed).choice(available_tasks)
