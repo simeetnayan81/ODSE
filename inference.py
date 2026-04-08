@@ -174,21 +174,17 @@ def run_individual_task(client, task_id: str) -> None:
     else:
         raise ValueError(f"Unknown task name: {task_id}")
     
-
-    if IMAGE_NAME:
-        base_client = OdseEnv.from_docker_image(IMAGE_NAME)
-    else:
-        base_client = OdseEnv(base_url=ENV_BASE_URL)
+    try:
         
-    history: List[str] = []
-    rewards: List[float] = []
-    steps_taken = 0
-    score = 0.0
-    success = False
+        base_client = OdseEnv(base_url=ENV_BASE_URL)    
+        history: List[str] = []
+        rewards: List[float] = []
+        steps_taken = 0
+        score = 0.01
+        success = False
 
-    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-    with base_client.sync() as env:
-        try:
+        log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+        with base_client.sync() as env:
             result = env.reset(difficulty=difficulty, max_steps=max_steps)
             obs = result.observation
             last_reward = 0.0
@@ -228,32 +224,24 @@ def run_individual_task(client, task_id: str) -> None:
                 
             score = max(0.01, min(0.99, score))  # clamp to strict
             success = score >= SUCCESS_SCORE_THRESHOLD
-
-        finally:
             try:
                 env.close()
             except Exception as e:
                 pass
-            log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    finally:
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
     
 
 def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     tasks = ["task_easy", "task_medium", "task_hard"]
-    failed_tasks = []
     
     for task in tasks:
         try:
             run_individual_task(client, task)
         except Exception as e:
-            failed_tasks.append(task)
-            
-    # Retry one time
-    for task in failed_tasks:
-        try:
-            run_individual_task(client, task)
-        except Exception as e:
             pass
+    
 
 if __name__ == "__main__":
     main()
