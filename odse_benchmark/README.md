@@ -35,6 +35,7 @@ This folder is designed so you can push its contents to a **Docker HF Space** an
    - `PUSH_TO_HUB=1`
    - `ENV_BASE_URL` (your ODSE env URL)
    - `USE_VLLM=0` (recommended default for reliability; startup script enforces this unless explicitly set to `1/true/yes`)
+   - `FORCE_DISABLE_VLLM=1` (hard-disable vLLM path in trainer; recommended until training is stable)
    - `VLLM_MODE=colocate`
    - optional training vars from `.env.example`
 3. Push this `odse_benchmark/` folder as the Space repository contents:
@@ -46,7 +47,8 @@ This folder is designed so you can push its contents to a **Docker HF Space** an
 
 ## vLLM notes
 
-- `USE_VLLM=0` is the safest default. Enable `USE_VLLM=1` only when you have enough GPU memory and want faster generation.
+- `FORCE_DISABLE_VLLM=1` is the safest default and bypasses vLLM completely.
+- After stability is confirmed, set `FORCE_DISABLE_VLLM=0` and then optionally try `USE_VLLM=1`.
 - If startup fails with KV-cache/max-seq-len errors, lower `VLLM_MAX_MODEL_LEN` (for example `12000`) and/or raise `VLLM_GPU_MEMORY_UTILIZATION` (for example `0.95`).
 - Keep `NUM_GENERATIONS>=2` for GRPO.
 - If a very new model architecture is not recognized, set `FALLBACK_MODEL_NAME` (default is `Qwen/Qwen2.5-3B-Instruct`).

@@ -52,6 +52,7 @@ VLLM_SERVER_URL = os.getenv("VLLM_SERVER_URL", "http://localhost:8000")
 USE_VLLM_ENV = os.getenv("USE_VLLM", "auto").strip().lower()
 VLLM_GPU_MEMORY_UTILIZATION = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.95"))
 VLLM_MAX_MODEL_LEN = int(os.getenv("VLLM_MAX_MODEL_LEN", "12000"))
+FORCE_DISABLE_VLLM = os.getenv("FORCE_DISABLE_VLLM", "1").strip().lower() in {"1", "true", "yes"}
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -361,7 +362,10 @@ def build_trainer(
 ) -> GRPOTrainer:
     task_prompts = (["task_easy", "task_medium", "task_hard"] * max(1, DATASET_SIZE // 3 + 1))[:DATASET_SIZE]
     train_dataset = Dataset.from_dict({"prompt": task_prompts})
-    if use_vllm_override is not None:
+    if FORCE_DISABLE_VLLM:
+        use_vllm = False
+        print("FORCE_DISABLE_VLLM=1 -> vLLM disabled.", flush=True)
+    elif use_vllm_override is not None:
         use_vllm = use_vllm_override
     else:
         has_vllm = importlib.util.find_spec("vllm") is not None
@@ -504,12 +508,18 @@ def main() -> None:
     trainer = None
 
     # Try progressively safer setups to avoid crash loops on Spaces.
-    build_attempts: List[tuple[str, Optional[bool], str]] = [
-        (resolved_model_name, None, "auto mode"),
-        (VLLM_FALLBACK_MODEL_NAME, True, "vLLM fallback model"),
-        (resolved_model_name, False, "disable vLLM"),
-        (OOM_FALLBACK_MODEL_NAME, False, "smaller OOM fallback model"),
-    ]
+    if FORCE_DISABLE_VLLM:
+        build_attempts: List[tuple[str, Optional[bool], str]] = [
+            (resolved_model_name, False, "forced non-vLLM mode"),
+            (OOM_FALLBACK_MODEL_NAME, False, "smaller OOM fallback model"),
+        ]
+    else:
+        build_attempts = [
+            (resolved_model_name, None, "auto mode"),
+            (VLLM_FALLBACK_MODEL_NAME, True, "vLLM fallback model"),
+            (resolved_model_name, False, "disable vLLM"),
+            (OOM_FALLBACK_MODEL_NAME, False, "smaller OOM fallback model"),
+        ]
 
     last_exc: Optional[Exception] = None
     for candidate_model, vllm_override, label in build_attempts:
