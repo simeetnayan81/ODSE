@@ -361,6 +361,7 @@ def build_trainer(
     train_dataset = Dataset.from_dict({"prompt": task_prompts})
 
     grpo_kwargs: dict[str, Any] = dict(
+        use_vllm=False,
         output_dir=OUTPUT_DIR,
         hub_model_id=HF_REPO_ID,
         hub_token=API_KEY,
@@ -379,6 +380,8 @@ def build_trainer(
         temperature=TEMPERATURE,
     )
     grpo_fields = getattr(GRPOConfig, "__dataclass_fields__", {})
+    if "use_vllm" in grpo_fields:
+        grpo_kwargs["use_vllm"] = False
     if "gradient_checkpointing" in grpo_fields:
         grpo_kwargs["gradient_checkpointing"] = GRADIENT_CHECKPOINTING
     if "max_prompt_length" in grpo_fields:
@@ -389,6 +392,7 @@ def build_trainer(
         grpo_kwargs["fp16"] = True
 
     grpo_config = GRPOConfig(**grpo_kwargs)
+    print(f"GRPOConfig: use_vllm={getattr(grpo_config, 'use_vllm', False)}", flush=True)
 
     def rollout_func(prompts: list[str], trainer: GRPOTrainer) -> dict[str, list]:
         episode_prompt_ids: List[List[int]] = []
