@@ -117,6 +117,7 @@ class DatasetInfo(BaseModel):
     val_shape: Tuple[int, int]
     test_shape: Tuple[int, int]
     target_column: str
+    problem_description: str = ""
     problem_type: str  # "classification" or "regression"
     metric: str  # primary metric name (e.g. "accuracy", "r2")
     columns: List[ColumnSchema]

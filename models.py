@@ -133,6 +133,9 @@ class OdseState(State):
     target_column: str = Field(
         default="", description="Name of the target column in the dataset"
     )
+    problem_description: str = Field(
+        default="", description="Human-readable description of the dataset objective"
+    )
     metric: str = Field(
         default="", description="Primary evaluation metric (e.g. 'accuracy', 'r2')"
     )

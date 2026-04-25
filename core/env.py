@@ -483,6 +483,7 @@ class ODSEnvironment:
             val_shape=tuple(split.val_features.shape),
             test_shape=tuple(split.test_features.shape),
             target_column=cfg.target_column,
+            problem_description=cfg.problem_description,
             problem_type=self.problem_type.value,
             metric=self.metric,
             columns=columns,
@@ -511,6 +512,7 @@ class ODSEnvironment:
         return (
             f"{pt} TASK: Build a model to predict '{tc}' using the "
             f"provided training data.\n\n"
+            f"Problem definition: {self.dataset_config.problem_description}\n\n"
             f"Your code runs in a persistent sandbox - variables survive "
             f"across RunCode steps.\n"
             f"Pre-loaded variables: train_df, val_features, test_features, "

@@ -83,7 +83,11 @@ class OdseEnvironment(Environment):
                 ("wine", "classification"),
                 ("house_price", "regression"),
                 ('synth_cls', 'classification'),
-                ('regression', 'regression')
+                ('regression', 'regression'),
+                ("diabetes", "regression"),
+                ("diabetes_risk", "classification"),
+                ("digits", "classification"),
+                ("linnerud", "regression"),
             ]
             if seed is not None:
                 dataset, p_type = random.Random(seed).choice(available_tasks)
@@ -110,6 +114,7 @@ class OdseEnvironment(Environment):
             difficulty=self._core_env.difficulty.value,
             problem_type=self._core_env.problem_type.value,
             target_column=self._core_env.dataset_config.target_column,
+            problem_description=self._core_env.dataset_config.problem_description,
             metric=self._core_env.metric,
             max_steps=self._core_env.max_steps,
             done=False,

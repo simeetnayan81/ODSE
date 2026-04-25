@@ -23,6 +23,9 @@ from sklearn.datasets import (
     load_breast_cancer,
     load_iris,
     load_wine,
+    load_diabetes,
+    load_digits,
+    load_linnerud,
     make_classification,
     make_regression,
 )
@@ -44,6 +47,8 @@ class DatasetConfig:
         Name of the target column.
     problem_type : ProblemType
         Classification or regression.
+    problem_description : str
+        Human-readable objective for the dataset domain problem.
     feature_columns : List[str] | None
         Explicit feature list; if *None*, all non-target / non-excluded
         columns are used.
@@ -56,12 +61,14 @@ class DatasetConfig:
         df: pd.DataFrame,
         target_column: str,
         problem_type: ProblemType,
+        problem_description: str = "",
         feature_columns: Optional[List[str]] = None,
         exclude_columns: Optional[List[str]] = None,
     ) -> None:
         self.df = df
         self.target_column = target_column
         self.problem_type = problem_type
+        self.problem_description = problem_description
         self.exclude_columns = exclude_columns or []
         self.feature_columns: List[str] = feature_columns or [
             c
@@ -97,7 +104,10 @@ def load_dataset(
         raise ValueError(
             f"Unknown dataset '{name}'. Available: {available}"
         )
-    return loader()
+    cfg = loader()
+    if not cfg.problem_description:
+        cfg.problem_description = _default_problem_description(name, cfg.problem_type)
+    return cfg
 
 def list_datasets() -> List[Dict[str, str]]:
     """Return a summary of all registered datasets."""
@@ -109,6 +119,47 @@ def list_datasets() -> List[Dict[str, str]]:
     return [
         {"name": n, "difficulties": sorted(d)} for n, d in datasets.items()
     ]
+
+
+def _default_problem_description(name: str, problem_type: ProblemType) -> str:
+    """Return a default domain-aware objective for *name*."""
+    descriptions: Dict[str, str] = {
+        "breast_cancer": (
+            "Predict whether a tumor is malignant or benign from cell-nuclei measurements."
+        ),
+        "iris": (
+            "Classify iris flowers into species using sepal and petal measurements."
+        ),
+        "wine": (
+            "Predict wine cultivar class from physicochemical properties."
+        ),
+        "synth_cls": (
+            "Predict the class label from synthetic tabular features."
+        ),
+        "regression": (
+            "Predict a continuous target value from synthetic tabular features."
+        ),
+        "house_price": (
+            "Estimate house sale price from property attributes and neighborhood context."
+        ),
+        "diabetes": (
+            "Predict quantitative diabetes progression from baseline clinical measurements."
+        ),
+        "digits": (
+            "Classify handwritten digit images based on pixel-intensity features."
+        ),
+        "linnerud": (
+            "Predict pulse rate from physiological exercise measurements."
+        ),
+    }
+    return descriptions.get(
+        name,
+        (
+            "Predict the target column from available features."
+            if problem_type == ProblemType.REGRESSION
+            else "Classify each example into the correct target class."
+        ),
+    )
 
 # ============================================================================
 # Helpers
@@ -353,6 +404,127 @@ def _load_house_price() -> DatasetConfig:
         problem_type=ProblemType.REGRESSION,
     )
 
+# -- Diabetes (regression) ---------------------------------------------------
+def _load_diabetes_easy() -> DatasetConfig:
+    """Diabetes dataset - regression task, 10 numeric features, clean."""
+    bunch = load_diabetes()
+    df = pd.DataFrame(bunch.data, columns=bunch.feature_names)
+    df["target"] = bunch.target
+    return DatasetConfig(
+        df=df,
+        target_column="target",
+        problem_type=ProblemType.REGRESSION,
+    )
+
+def _load_diabetes_medium() -> DatasetConfig:
+    """Diabetes with moderate nulls + one categorical feature."""
+    cfg = _load_diabetes_easy()
+    df = _inject_nulls(
+        cfg.df, columns=["bmi", "bp", "s5"], fraction=0.12, seed=123
+    )
+    df = _add_categorical_column(df, "sex_group", ["low", "normal", "high"], seed=123)
+    return DatasetConfig(
+        df=df,
+        target_column="target",
+        problem_type=ProblemType.REGRESSION,
+    )
+
+def _load_diabetes_hard() -> DatasetConfig:
+    """Diabetes hard - heavy nulls + noise columns."""
+    cfg = _load_diabetes_easy()
+    df = _inject_nulls(
+        cfg.df, columns=list(cfg.df.columns[:-1]), fraction=0.22, seed=456
+    )
+    rng = np.random.RandomState(456)
+    df["noise1"] = rng.randn(len(df))
+    df["noise2"] = rng.choice(["type_a", "type_b"], size=len(df))
+    return DatasetConfig(
+        df=df,
+        target_column="target",
+        problem_type=ProblemType.REGRESSION,
+    )
+
+
+# -- Digits (multi-class classification) -------------------------------------
+def _load_digits_easy() -> DatasetConfig:
+    """Handwritten digits - 10-class classification, 64 pixel features."""
+    bunch = load_digits()
+    df = pd.DataFrame(bunch.data, columns=[f"pixel_{i}" for i in range(64)])
+    df["digit"] = bunch.target
+    return DatasetConfig(
+        df=df,
+        target_column="digit",
+        problem_type=ProblemType.CLASSIFICATION,
+    )
+
+def _load_digits_medium() -> DatasetConfig:
+    """Digits with light nulls (tests imputation on high-dim data)."""
+    cfg = _load_digits_easy()
+    df = _inject_nulls(
+        cfg.df, columns=[f"pixel_{i}" for i in range(0, 64, 8)], fraction=0.08, seed=42
+    )
+    return DatasetConfig(
+        df=df,
+        target_column="digit",
+        problem_type=ProblemType.CLASSIFICATION,
+    )
+
+
+# -- Linnerud (real-world exercise physiology regression) ---------------------
+def _load_linnerud_easy() -> DatasetConfig:
+    """Linnerud - predict pulse from exercise and body measurements."""
+    bunch = load_linnerud()
+    features = pd.DataFrame(bunch.data, columns=bunch.feature_names)
+    targets = pd.DataFrame(bunch.target, columns=bunch.target_names)
+    df = features.copy()
+    df["pulse"] = targets["Pulse"]
+    return DatasetConfig(
+        df=df,
+        target_column="pulse",
+        problem_type=ProblemType.REGRESSION,
+    )
+
+
+def _load_linnerud_medium() -> DatasetConfig:
+    """Linnerud with moderate missingness and one categorical context column."""
+    cfg = _load_linnerud_easy()
+    df = _inject_nulls(
+        cfg.df,
+        columns=["Chins", "Situps", "Weight", "Waist"],
+        fraction=0.12,
+        seed=551,
+    )
+    df = _add_categorical_column(
+        df,
+        "activity_group",
+        ["beginner", "intermediate", "advanced"],
+        seed=551,
+    )
+    return DatasetConfig(
+        df=df,
+        target_column="pulse",
+        problem_type=ProblemType.REGRESSION,
+    )
+
+
+def _load_linnerud_hard() -> DatasetConfig:
+    """Linnerud hard mode with heavier nulls and distractor features."""
+    cfg = _load_linnerud_easy()
+    df = _inject_nulls(
+        cfg.df,
+        columns=[c for c in cfg.df.columns if c != "pulse"],
+        fraction=0.22,
+        seed=552,
+    )
+    rng = np.random.RandomState(552)
+    df["noise_a"] = rng.randn(len(df))
+    df["noise_b"] = rng.choice(["x", "y", "z"], size=len(df))
+    return DatasetConfig(
+        df=df,
+        target_column="pulse",
+        problem_type=ProblemType.REGRESSION,
+    )
+
 # ============================================================================
 # Registry - (name, Difficulty | None) -> loader callable
 # ============================================================================
@@ -373,6 +545,13 @@ _REGISTRY: Dict[_RegistryKey, Callable[[], DatasetConfig]] = {
     ("synth_cls", Difficulty.EASY): _load_synth_cls_easy,
     ("synth_cls", Difficulty.HARD): _load_synth_cls_hard,
     ("synth_cls", None): _load_synth_cls_easy,
+    ("diabetes", Difficulty.EASY): _load_diabetes_easy,
+    ("diabetes", Difficulty.MEDIUM): _load_diabetes_medium,
+    ("diabetes", Difficulty.HARD): _load_diabetes_hard,
+    ("diabetes", None): _load_diabetes_easy,
+    ("digits", Difficulty.EASY): _load_digits_easy,
+    ("digits", Difficulty.MEDIUM): _load_digits_medium,
+    ("digits", None): _load_digits_easy,
     # -- Regression ----------------------------------------------------------
     ("regression", Difficulty.EASY): _load_regression_easy,
     ("regression", Difficulty.MEDIUM): _load_regression_medium,
@@ -380,4 +559,8 @@ _REGISTRY: Dict[_RegistryKey, Callable[[], DatasetConfig]] = {
     ("regression", None): _load_regression_easy,
     ("house_price", Difficulty.EASY): _load_house_price,
     ("house_price", None): _load_house_price,
+    ("linnerud", Difficulty.EASY): _load_linnerud_easy,
+    ("linnerud", Difficulty.MEDIUM): _load_linnerud_medium,
+    ("linnerud", Difficulty.HARD): _load_linnerud_hard,
+    ("linnerud", None): _load_linnerud_easy,
 }
