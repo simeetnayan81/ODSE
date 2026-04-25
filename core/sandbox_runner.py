@@ -21,7 +21,9 @@ from pathlib import Path
 ALLOWED_MODULES = {
     # Core data-science stack
     "numpy", "pandas", "sklearn", "scipy",
+    "matplotlib",
     "math", "statistics",
+    "random",
     # Standard-library utilities
     "collections", "itertools", "functools",
     "re", "json", "copy", "typing", "operator",
@@ -37,6 +39,7 @@ ALLOWED_MODULES = {
     "scipy.stats", "scipy.sparse", "scipy.optimize",
     # Optional extras
     "xgboost", "lightgbm", "catboost",
+    "optuna", "seaborn", "plotly",
 }
 
 BLOCKED_BUILTINS = {

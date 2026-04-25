@@ -6,7 +6,13 @@ RUN pip install --no-cache-dir \
     numpy>=1.24.0 \
     pandas>=1.5.0 \
     scikit-learn>=1.3.0 \
-    scipy>=1.10.0
+    scipy>=1.10.0 \
+    lightgbm \
+    xgboost \
+    catboost \
+    optuna \
+    seaborn \
+    plotly
 
 # Create a non-privileged user
 RUN groupadd -r sandbox && useradd -r -g sandbox sandbox
