@@ -47,6 +47,7 @@ This folder is designed so you can push its contents to a **Docker HF Space** an
 ## vLLM notes
 
 - If vLLM wheel install fails for your selected hardware/image, set `USE_VLLM=0` as fallback.
+- If startup fails with KV-cache/max-seq-len errors, lower `VLLM_MAX_MODEL_LEN` (for example `12000`) and/or raise `VLLM_GPU_MEMORY_UTILIZATION` (for example `0.95`).
 - Keep `NUM_GENERATIONS>=2` for GRPO.
 - If a very new model architecture is not recognized, set `FALLBACK_MODEL_NAME` (default is `Qwen/Qwen2.5-3B-Instruct`).
 - If vLLM does not support your selected model architecture, set `VLLM_FALLBACK_MODEL_NAME` (default is `Qwen/Qwen3-4B`).

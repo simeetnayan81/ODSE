@@ -50,6 +50,8 @@ MAX_COMPLETION_LENGTH = int(os.getenv("MAX_COMPLETION_LENGTH", "256"))
 VLLM_MODE = os.getenv("VLLM_MODE", "colocate")
 VLLM_SERVER_URL = os.getenv("VLLM_SERVER_URL", "http://localhost:8000")
 USE_VLLM_ENV = os.getenv("USE_VLLM", "auto").strip().lower()
+VLLM_GPU_MEMORY_UTILIZATION = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.95"))
+VLLM_MAX_MODEL_LEN = int(os.getenv("VLLM_MAX_MODEL_LEN", "12000"))
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -377,7 +379,7 @@ def build_trainer(
             if not use_vllm:
                 print("vLLM not found; continuing with Transformers generation (USE_VLLM=0).", flush=True)
 
-    grpo_config = GRPOConfig(
+    grpo_kwargs: dict[str, Any] = dict(
         use_vllm=use_vllm,
         vllm_mode=VLLM_MODE,
         vllm_server_base_url=VLLM_SERVER_URL if (use_vllm and VLLM_MODE == "server") else None,
@@ -398,6 +400,13 @@ def build_trainer(
         save_steps=10,
         temperature=TEMPERATURE,
     )
+    grpo_fields = getattr(GRPOConfig, "__dataclass_fields__", {})
+    if use_vllm and "vllm_gpu_memory_utilization" in grpo_fields:
+        grpo_kwargs["vllm_gpu_memory_utilization"] = VLLM_GPU_MEMORY_UTILIZATION
+    if use_vllm and "vllm_max_model_len" in grpo_fields:
+        grpo_kwargs["vllm_max_model_len"] = VLLM_MAX_MODEL_LEN
+
+    grpo_config = GRPOConfig(**grpo_kwargs)
 
     def rollout_func(prompts: list[str], trainer: GRPOTrainer) -> dict[str, list]:
         episode_prompt_ids: List[List[int]] = []
@@ -454,7 +463,13 @@ def _is_vllm_architecture_error(exc: Exception) -> bool:
 
 def _is_oom_error(exc: Exception) -> bool:
     msg = str(exc)
-    return "CUDA out of memory" in msg or "OutOfMemoryError" in msg
+    return (
+        "CUDA out of memory" in msg
+        or "OutOfMemoryError" in msg
+        or "available KV cache memory" in msg
+        or "estimated maximum model length" in msg
+        or "decreasing `max_model_len`" in msg
+    )
 
 
 def _cleanup_cuda_memory() -> None:
@@ -519,7 +534,20 @@ def main() -> None:
         raise RuntimeError(f"Unable to initialize trainer after fallback attempts: {last_exc}")
 
     print("Starting GRPO training on ODSE tasks...", flush=True)
-    trainer.train()
+    try:
+        trainer.train()
+    except Exception as exc:
+        if _is_oom_error(exc):
+            print(
+                "Training failed due to memory/KV-cache limits; retrying with vLLM disabled.",
+                flush=True,
+            )
+            _cleanup_cuda_memory()
+            tokenizer = _load_tokenizer(trainer_model_name)
+            trainer = build_trainer(tokenizer, trainer_model_name, use_vllm_override=False)
+            trainer.train()
+        else:
+            raise
     trainer.save_model(OUTPUT_DIR)
     tokenizer.save_pretrained(OUTPUT_DIR)
 
