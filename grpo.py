@@ -70,6 +70,9 @@ OUTPUT_DIR = os.getenv(
     "OUTPUT_DIR",
     f"{DEFAULT_OUTPUT_ROOT}/odse-grpo-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}",
 )
+HF_REPO_ID = os.getenv("HF_REPO_ID")
+HF_COMMIT_MESSAGE = os.getenv("HF_COMMIT_MESSAGE", "Add ODSE GRPO post-trained checkpoint")
+PUSH_TO_HUB = os.getenv("PUSH_TO_HUB", "0").lower() in {"1", "true", "yes"}
 NUM_EPOCHS = int(os.getenv("NUM_EPOCHS", "1"))
 DATASET_SIZE = int(os.getenv("DATASET_SIZE", "24"))
 NUM_GENERATIONS = int(os.getenv("NUM_GENERATIONS", "1"))
@@ -82,6 +85,19 @@ LOGGING_STEPS = int(os.getenv("LOGGING_STEPS", "1"))
 MAX_COMPLETION_LENGTH = int(os.getenv("MAX_COMPLETION_LENGTH", "256"))
 VLLM_MODE = os.getenv("VLLM_MODE", "colocate")
 VLLM_SERVER_URL = os.getenv("VLLM_SERVER_URL", "http://localhost:8000")
+
+
+def print_hf_space_guide() -> None:
+    lines = [
+        "HF Space setup (for post-training and Hub push):",
+        "1) Create a GPU Space (Docker or Gradio), then add secrets HF_TOKEN and optionally HF_REPO_ID.",
+        "2) Keep ENV_BASE_URL pointing to your ODSE env Space URL.",
+        "3) In the Space shell, install deps and run this script:",
+        "   pip install -U transformers trl datasets odse",
+        "   PUSH_TO_HUB=1 HF_REPO_ID=<username>/<repo> python grpo.py",
+        "4) Artifacts are written to OUTPUT_DIR and pushed to HF_REPO_ID when training completes.",
+    ]
+    print("\n".join(lines), flush=True)
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -356,6 +372,9 @@ def build_trainer(tokenizer: AutoTokenizer) -> GRPOTrainer:
         vllm_mode=VLLM_MODE,
         vllm_server_base_url=VLLM_SERVER_URL if VLLM_MODE == "server" else None,
         output_dir=OUTPUT_DIR,
+        hub_model_id=HF_REPO_ID,
+        hub_token=API_KEY,
+        push_to_hub=PUSH_TO_HUB,
         num_train_epochs=NUM_EPOCHS,
         learning_rate=LEARNING_RATE,
         weight_decay=WEIGHT_DECAY,
@@ -401,12 +420,24 @@ def build_trainer(tokenizer: AutoTokenizer) -> GRPOTrainer:
 
 
 def main() -> None:
+    print_hf_space_guide()
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
     trainer = build_trainer(tokenizer)
 
     print("Starting GRPO training on ODSE tasks...", flush=True)
     trainer.train()
+    trainer.save_model(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+
+    if PUSH_TO_HUB:
+        if not API_KEY:
+            raise ValueError("PUSH_TO_HUB is enabled but HF_TOKEN/API_KEY is not set.")
+        if not HF_REPO_ID:
+            raise ValueError("PUSH_TO_HUB is enabled but HF_REPO_ID is not set.")
+        print(f"Pushing checkpoint to Hugging Face Hub: {HF_REPO_ID}", flush=True)
+        trainer.push_to_hub(commit_message=HF_COMMIT_MESSAGE)
+        tokenizer.push_to_hub(HF_REPO_ID, token=API_KEY, commit_message=HF_COMMIT_MESSAGE)
 
     tasks = ["task_easy", "task_medium", "task_hard"]
 
