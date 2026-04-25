@@ -34,7 +34,7 @@ This folder is designed so you can push its contents to a **Docker HF Space** an
    - `HF_REPO_ID` (required if `PUSH_TO_HUB=1`)
    - `PUSH_TO_HUB=1`
    - `ENV_BASE_URL` (your ODSE env URL)
-   - `USE_VLLM=0` (recommended default for reliability)
+   - `USE_VLLM=0` (recommended default for reliability; startup script enforces this unless explicitly set to `1/true/yes`)
    - `VLLM_MODE=colocate`
    - optional training vars from `.env.example`
 3. Push this `odse_benchmark/` folder as the Space repository contents:
