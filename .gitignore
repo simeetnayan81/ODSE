@@ -4,3 +4,4 @@ __pycache__
 .DS_Store
 openenv_odse.egg-info
 odse.egg-info
+validate-submission.sh
