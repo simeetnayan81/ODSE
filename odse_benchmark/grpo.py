@@ -375,8 +375,15 @@ def build_trainer(
         elif USE_VLLM_ENV in {"0", "false", "no"}:
             use_vllm = False
         else:
-            use_vllm = has_vllm
-            if not use_vllm:
+            # Be conservative in auto mode: many smaller GPUs fail during vLLM KV-cache init.
+            use_vllm = False
+            if has_vllm:
+                print(
+                    "USE_VLLM=auto selected safe mode (vLLM disabled). "
+                    "Set USE_VLLM=1 to force vLLM.",
+                    flush=True,
+                )
+            else:
                 print("vLLM not found; continuing with Transformers generation (USE_VLLM=0).", flush=True)
 
     grpo_kwargs: dict[str, Any] = dict(
