@@ -229,24 +229,66 @@ class SandboxExecutor:
     # -- Private helpers -----------------------------------------------------
 
     def _exec_with_timeout(self, code: str) -> None:
-        """Compile and exec *code* with an optional SIGALRM timeout."""
+        """Compile and exec *code* with a timeout.
+
+        Uses SIGALRM on the main thread (hard kill), and falls back to a
+        threading.Timer + ctypes interrupt on worker threads (e.g. inside
+        uvicorn).
+        """
+        import threading
+
         compiled = compile(code, "<sandbox>", "exec")
+        is_main = threading.current_thread() is threading.main_thread()
 
-        old_handler = None
-        if hasattr(signal, "SIGALRM"):
-            def _alarm(signum, frame):  # noqa: ARG001
-                raise _SandboxTimeout(
-                    f"Code execution exceeded {self.timeout_seconds}s time limit"
-                )
-            old_handler = signal.signal(signal.SIGALRM, _alarm)
-            signal.alarm(int(self.timeout_seconds))
+        if is_main and hasattr(signal, "SIGALRM"):
+            self._exec_with_sigalrm(compiled)
+        else:
+            self._exec_with_timer(compiled)
 
+    def _exec_with_sigalrm(self, compiled: Any) -> None:
+        """SIGALRM-based timeout (main thread only)."""
+        def _alarm(signum, frame):  # noqa: ARG001
+            raise _SandboxTimeout(
+                f"Code execution exceeded {self.timeout_seconds}s time limit"
+            )
+
+        old_handler = signal.signal(signal.SIGALRM, _alarm)
+        signal.alarm(int(self.timeout_seconds))
         try:
             exec(compiled, self._namespace)  # noqa: S102
         finally:
-            if hasattr(signal, "SIGALRM") and old_handler is not None:
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, old_handler)
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+    def _exec_with_timer(self, compiled: Any) -> None:
+        """threading.Timer-based timeout (works from any thread)."""
+        import ctypes
+        import threading
+
+        tid = threading.current_thread().ident
+        timed_out = False
+
+        def _interrupt():
+            nonlocal timed_out
+            timed_out = True
+            if tid is not None:
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                    ctypes.c_ulong(tid),
+                    ctypes.py_object(KeyboardInterrupt),
+                )
+
+        timer = threading.Timer(self.timeout_seconds, _interrupt)
+        timer.start()
+        try:
+            exec(compiled, self._namespace)  # noqa: S102
+        except KeyboardInterrupt:
+            if timed_out:
+                raise _SandboxTimeout(
+                    f"Code execution exceeded {self.timeout_seconds}s time limit"
+                ) from None
+            raise
+        finally:
+            timer.cancel()
 
     def _make_safe_builtins(self) -> Dict[str, Any]:
         """Build a restricted ``__builtins__`` dict."""

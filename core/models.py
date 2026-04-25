@@ -179,6 +179,16 @@ class Observation(BaseModel):
         description="Best validation score achieved this episode",
     )
 
+    test_score: Optional[float] = Field(
+        default=None,
+        description="Test-set score (populated only after submit)",
+    )
+    test_report: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Full test evaluation report (populated only after submit)",
+    )
+
+
     # - Episode context ------------------------------------------------------
     step_count: int = Field(ge=0, description="Steps taken so far")
     max_steps: int = Field(ge=1, description="Step budget for this episode")

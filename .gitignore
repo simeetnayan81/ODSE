@@ -1,3 +1,6 @@
 __pycache__
 *.egg-info
 .venv
+.DS_Store
+openenv_odse.egg-info
+odse.egg-info

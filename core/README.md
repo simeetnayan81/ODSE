@@ -1,143 +1,72 @@
-# ODSE
-Open Data Science Environment (ODSE): A standardized environment for AI agents to master end-to-end data science pipelines.
+# Open Data Science Sandbox Environment (ODSE)
 
-## Overview
+ODSE is a persistent, sandboxed Reinforcement Learning (RL) environment designed to train and evaluate autonomous AI agents on data science tasks. 
 
-ODSE is a Reinforcement Learning environment built for Data Science Sandbox. It simulates the various **Data Science** task where agents learn to handle missing values and improve model accuracy. The environment follows a strict API specification: `reset()`, `state()`, and `step(action)`.
+Instead of choosing from a predefined list of discrete actions, agents interact with ODSE by writing and executing raw Python code. The environment evaluates the agent's ability to explore data, handle missing values, train machine learning models, and submit predictions on hidden test sets.
 
-## Features
+## Key Features
 
-- **Pydantic-typed API**: Fully type-safe observations and actions using Pydantic v2 discriminated unions
-- **Pandas-based State Management**: Internal state managed as a working DataFrame
-- **Scikit-learn Integration**: Fast accuracy evaluation via 5-fold cross-validation with LogisticRegression
-- **Embedded Titanic Dataset**: Pre-packaged dirty Titanic CSV for quick testing
-- **Structured Rewards**: Accuracy-based rewards with step penalties
-- **Performance Grading**: Built-in grader function for evaluating agent performance
-
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-## API Reference
-
-### Environment Interface
-
-#### `reset() → Observation`
-Loads a dirty Titanic dataset and resets the episode. Returns initial observation.
-
-**Example:**
-```python
-env = ODSEEnvironment(seed=42)
-obs = env.reset()
-```
-
-#### `state() → Observation`
-Returns current environment state with column metadata and model accuracy.
-
-**Observation fields:**
-- `column_metadata`: Dict mapping column names to `{null_count, type, null_percentage}`
-- `sample_head`: First 5 rows as JSON dict
-- `current_accuracy`: 5-fold CV accuracy on LogisticRegression (0.0-1.0)
-- `step_count`: Number of actions taken
-- `nulls_remaining`: Total missing values in dataset
-
-#### `step(action: Action) → StepResult`
-Executes an action and returns the result.
-
-**Action Types (Discriminated Union):**
-
-1. **ImputeAction**
-   ```python
-   ImputeAction(column="Age", strategy="mean" | "median" | "mode")
-   ```
-   Fills missing values using the specified strategy.
-
-2. **DropAction**
-   ```python
-   DropAction(column="Cabin")
-   ```
-   Removes a column entirely.
-
-3. **SubmitAction**
-   ```python
-   SubmitAction()
-   ```
-   Terminates the episode and triggers final evaluation.
-
-**StepResult fields:**
-- `observation`: Updated observation
-- `reward`: (accuracy_gain × 10.0) - 0.01 (step penalty)
-- `done`: True if episode terminated
-- `info`: Dict with debugging info
-
-#### `grade_performance(final_df: DataFrame) → float`
-Evaluates final performance on a 0.0-1.0 scale.
-
+* **Notebook-Style Execution:** Agents execute arbitrary Python code in a persistent namespace. Variables, models, and data frames survive across execution steps.
+* **Built-in Datasets:** Includes classification and regression tasks (Breast Cancer, Iris, Wine, House Prices) with configurable difficulty levels (Easy, Medium, Hard) that inject noise and missing values.
+* **Safe Sandboxing:** Code is executed with strict wall-clock timeouts, stdout/stderr truncation, and restricted imports (whitelisting `pandas`, `sklearn`, `numpy`, etc.) to prevent environment corruption.
+* **Dense Reward Shaping:** Designed for RL. Agents receive immediate heuristic rewards for successful code execution, generating predictions, and improving validation scores, mitigating the sparse-reward problem in code generation.
+* **Pydantic Data Contracts:** Strongly typed actions, observations, and step results.
 
 ## Quick Start
 
 ```python
-from env import ODSEEnvironment, grade_performance
-from models import ImputeAction, DropAction, SubmitAction
+from core.env import ODSEnvironment
+from core.models import RunCodeAction, SubmitAction
 
-# Initialize
-env = ODSEEnvironment(seed=42)
+# 1. Initialize the environment
+env = ODSEnvironment(dataset="breast_cancer", difficulty="easy")
 obs = env.reset()
 
-# Take actions
-action = ImputeAction(column="Age", strategy="mean")
-result = env.step(action)
+print(obs.task_description)
 
-action = DropAction(column="Cabin")
-result = env.step(action)
+# 2. Agent explores the data
+result = env.step(RunCodeAction(code="""
+print(train_df.head())
+print(train_df.isnull().sum())
+"""))
+print(result.observation.stdout)
 
-# Submit episode
-result = env.step(SubmitAction())
-score = grade_performance(env.working_df)
-print(f"Final Score: {score:.2f}")
+# 3. Agent trains a model
+result = env.step(RunCodeAction(code="""
+from sklearn.linear_model import LogisticRegression
+X = train_df.drop('target', axis=1)
+y = train_df['target']
+
+model = LogisticRegression(max_iter=1000)
+model.fit(X, y)
+
+# Score on validation set
+val_preds = model.predict(val_features)
+print(evaluate(val_preds))
+"""))
+
+# 4. Agent predicts on the test set and submits
+result = env.step(RunCodeAction(code="""
+predictions = model.predict(test_features)
+"""))
+
+final_result = env.step(SubmitAction())
+print(f"Final Test Score: {final_result.info['test_score']}")
 ```
 
-## Example Run
+## Action Space
 
-Run the example script:
-```bash
-python example.py
-```
+The environment relies on two primary actions:
 
-## Reward Structure
+- **RunCodeAction(code: str)**: Executes a block of Python code in the sandbox.
+- **SubmitAction()**: Reads the predictions variable from the sandbox, scores it against the hidden test labels, and terminates the episode.
 
-The agent receives rewards based on:
-```
-reward = (new_accuracy - old_accuracy) × 10 - 0.01
-```
+## Observation Space
 
-- **Positive reward**: Accuracy improves (incentivizes data quality)
-- **Step penalty**: -0.01 per action (encourages efficiency)
-- **Submit bonus**: No penalty for submitting
+At each step, the agent receives a rich Observation object containing:
 
-## Termination Conditions
-
-An episode ends when:
-1. Agent calls `SubmitAction()`
-2. All missing values are imputed/removed (`nulls_remaining == 0`)
-
-## Implementation Notes
-
-- **Dataset**: Dirty Titanic CSV with 20 rows and ~20% missing values in key features
-- **Target**: Survived (binary classification)
-- **Features**: Auto-selects numeric and categorical columns (excludes PassengerId, Name, Ticket, Cabin from features by default in grading)
-- **CV Strategy**: 5-fold cross-validation for robust accuracy estimates
-- **Encoding**: LabelEncoder for categorical features during model training
-
-## Dependencies
-
-- `pydantic>=2.0.0`: Type validation and serialization
-- `pandas>=1.5.0`: Data manipulation
-- `scikit-learn>=1.3.0`: Machine learning models
-- `numpy>=1.24.0`: Numerical computing
-- `typing-extensions>=4.5.0`: Advanced type hints
-
----
+- **stdout and stderr**: Output from the last executed code.
+- **execution_status**: Success, Error, or Timeout.
+- **namespace_summary**: A summary of variables currently in the sandbox (shapes, types).
+- **validation_score**: The current best score achieved on the validation set.
+- **dataset_info**: Metadata about the features, data types, and null counts.

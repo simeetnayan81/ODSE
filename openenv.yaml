@@ -4,4 +4,18 @@ type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+tasks:
+  - id: task_easy
+    description: "An easy data science task for evaluation."
+    difficulty: "easy"
+    grader: graders:EasyGrader
+  
+  - id: task_medium
+    description: "A medium data science task for evaluation."
+    difficulty: "medium"
+    grader: graders:MediumGrader
 
+  - id: task_hard
+    description: "A hard data science task for evaluation."
+    difficulty: "hard"
+    grader: graders:HardGrader

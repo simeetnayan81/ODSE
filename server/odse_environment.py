@@ -1,104 +1,164 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
-Odse Environment Implementation.
+ODSE Environment Implementation (OpenEnv-compatible).
 
-A simple test environment that echoes back messages sent to it.
-Perfect for testing HTTP server infrastructure.
+Wraps the core ``ODSEnvironment`` in the OpenEnv ``Environment`` interface
+so it can be served over HTTP / WebSocket via the standard OpenEnv server.
 """
 
+import random
+from typing import Any, Optional
 from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
-from openenv.core.env_server.types import State
 
-try:
-    from ..models import OdseAction, OdseObservation
-except ImportError:
-    from models import OdseAction, OdseObservation
+from odse.models import OdseAction, OdseObservation, OdseState
+from odse.core.env import ODSEnvironment
+from odse.core.models import RunCodeAction, SubmitAction
 
 
 class OdseEnvironment(Environment):
+    """OpenEnv wrapper around the core ODSE sandbox environment.
+
+    Each episode presents the agent with a dataset, a sandbox executor,
+    and asks it to build a predictive model by writing Python code.
+
+    Example::
+
+        env = OdseEnvironment()
+        obs = env.reset()
+        print(obs.task_description)
+        obs = env.step(OdseAction(action_type="run_code",
+                                  code="print(train_df.shape)"))
+        print(obs.stdout)
+        obs = env.step(OdseAction(action_type="submit"))
     """
-    A simple echo environment that echoes back messages.
 
-    This environment is designed for testing the HTTP server infrastructure.
-    It maintains minimal state and simply echoes back whatever message it receives.
+    SUPPORTS_CONCURRENT_SESSIONS: bool = False  # Docker executor is not concurrency-safe
 
-    Example:
-        >>> env = OdseEnvironment()
-        >>> obs = env.reset()
-        >>> print(obs.echoed_message)  # "Odse environment ready!"
-        >>>
-        >>> obs = env.step(OdseAction(message="Hello"))
-        >>> print(obs.echoed_message)  # "Hello"
-        >>> print(obs.message_length)  # 5
-    """
+    def __init__(
+        self,
+        dataset: Optional[str] = None,
+        difficulty: str = "easy",
+        problem_type: Optional[str] = None,
+        metric: Optional[str] = None,
+        max_steps: Optional[int] = None,
+        timeout_seconds: float = 30.0,
+        seed: int = 42,
+    ):
+        super().__init__()
+        self._dataset = dataset
+        self._difficulty = difficulty
+        self._problem_type = problem_type
+        self._metric = metric
+        self._max_steps = max_steps
+        self._timeout_seconds = timeout_seconds
+        self._seed = seed
 
-    # Enable concurrent WebSocket sessions.
-    # Set to True if your environment isolates state between instances.
-    # When True, multiple WebSocket clients can connect simultaneously, each
-    # getting their own environment instance (when using factory mode in app.py).
-    SUPPORTS_CONCURRENT_SESSIONS: bool = True
+        self._core_env: Optional[ODSEnvironment] = None
+        self._state = OdseState(episode_id=str(uuid4()), step_count=0)
 
-    def __init__(self):
-        """Initialize the odse environment."""
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-        self._reset_count = 0
+    # ---------------------------------------------------------------------- reset
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> OdseObservation:
+        """Reset the environment and return the initial observation."""
 
-    def reset(self) -> OdseObservation:
-        """
-        Reset the environment.
+        effective_seed = seed if seed is not None else self._seed
 
-        Returns:
-            OdseObservation with a ready message
-        """
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-        self._reset_count += 1
+        # Allow per-episode overrides via kwargs
+        dataset = kwargs.get("dataset", self._dataset)
+        difficulty = kwargs.get("difficulty", self._difficulty)
+        p_type = kwargs.get("problem_type", self._problem_type)
+        metric = kwargs.get("metric", self._metric)
+        max_steps = kwargs.get("max_steps", self._max_steps)
 
-        return OdseObservation(
-            echoed_message="Odse environment ready!",
-            message_length=0,
-            done=False,
-            reward=0.0,
+        # Randomly select a dataset and corresponding problem type if not specified
+        if dataset is None:
+            available_tasks = [
+                ("breast_cancer", "classification"),
+                ("iris", "classification"),
+                ("wine", "classification"),
+                ("house_price", "regression"),
+                ('synth_cls', 'classification'),
+                ('regression', 'regression')
+            ]
+            if seed is not None:
+                dataset, p_type = random.Random(seed).choice(available_tasks)
+            else:
+                dataset, p_type = random.choice(available_tasks)
+
+        self._core_env = ODSEnvironment(
+            dataset=dataset,
+            difficulty=difficulty,
+            problem_type=p_type,
+            metric=metric,
+            max_steps=max_steps,
+            timeout_seconds=self._timeout_seconds,
+            seed=effective_seed,
         )
 
-    def step(self, action: OdseAction) -> OdseObservation:  # type: ignore[override]
-        """
-        Execute a step in the environment by echoing the message.
+        core_obs = self._core_env.reset()
 
-        Args:
-            action: OdseAction containing the message to echo
-
-        Returns:
-            OdseObservation with the echoed message and its length
-        """
-        self._state.step_count += 1
-
-        message = action.message
-        length = len(message)
-
-        # Simple reward: longer messages get higher rewards
-        reward = length * 0.1
-
-        return OdseObservation(
-            echoed_message=message,
-            message_length=length,
+        # Build state
+        self._state = OdseState(
+            episode_id=episode_id or str(uuid4()),
+            step_count=0,
+            dataset_name=self._core_env.dataset_name,
+            difficulty=self._core_env.difficulty.value,
+            problem_type=self._core_env.problem_type.value,
+            target_column=self._core_env.dataset_config.target_column,
+            metric=self._core_env.metric,
+            max_steps=self._core_env.max_steps,
             done=False,
-            reward=reward,
-            metadata={"original_message": message, "step": self._state.step_count},
+            best_validation_score=None,
+            latest_validation_score=None,
         )
 
+        return OdseObservation(**core_obs.model_dump(), reward=0.0)
+
+    # ---------------------------------------------------------------------- step
+    def step(
+        self,
+        action: OdseAction,
+        timeout_s: Optional[float] = None,
+        **kwargs: Any,
+    ) -> OdseObservation:
+        """Execute an action and return the resulting observation."""
+        if self._core_env is None:
+            raise RuntimeError("Environment not initialised. Call reset() first.")
+
+        # Convert OpenEnv action -> core action
+        if action.action_type == "run_code":
+            if not action.code:
+                raise ValueError(
+                    "'action_type='run_code' requires a non-empty 'code' field."
+                )
+            core_action = RunCodeAction(code=action.code)
+        elif action.action_type == "submit":
+            core_action = SubmitAction()
+        else:
+            raise ValueError(f"Unknown action_type: {action.action_type!r}")
+
+        step_result = self._core_env.step(core_action)
+
+        # Sync state
+        self._state.step_count = step_result.observation.step_count
+        self._state.done = step_result.done
+        self._state.best_validation_score = step_result.observation.best_validation_score
+        self._state.latest_validation_score = step_result.observation.validation_score
+
+        # Construct OpenEnv observation from core observation
+        return OdseObservation(
+            **step_result.observation.model_dump(),
+            reward=step_result.reward,
+            info=step_result.info,
+        )
+
+    # ---------------------------------------------------------------------- state
     @property
-    def state(self) -> State:
-        """
-        Get the current environment state.
-
-        Returns:
-            Current State with episode_id and step_count
-        """
+    def state(self) -> OdseState:
+        """Current environment state."""
         return self._state

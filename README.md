@@ -1,5 +1,5 @@
 ---
-title: Odse Environment Server
+title: Open Data Science Environment (ODSE)
 emoji: 🎪
 colorFrom: pink
 colorTo: yellow
@@ -11,38 +11,62 @@ tags:
   - openenv
 ---
 
-# Odse Environment
+# Open Data Science Sandbox Environment (ODSE)
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+ODSE is a persistent, sandboxed Reinforcement Learning (RL) environment designed to train and evaluate autonomous AI agents on data science tasks. 
+
+Instead of choosing from a predefined list of discrete actions, agents interact with ODSE by writing and executing raw Python code. The environment evaluates the agent's ability to explore data, handle missing values, train machine learning models, and submit predictions on hidden test sets.
+
+## Key Features
+
+* **Notebook-Style Execution:** Agents execute arbitrary Python code in a persistent namespace. Variables, models, and data frames survive across execution steps.
+* **Built-in Datasets:** Includes classification and regression tasks (Breast Cancer, Iris, Wine, House Prices) with configurable difficulty levels (Easy, Medium, Hard) that inject noise and missing values.
+* **Safe Sandboxing:** Code is executed with strict wall-clock timeouts, stdout/stderr truncation, and restricted imports (whitelisting `pandas`, `sklearn`, `numpy`, etc.) to prevent environment corruption.
+* **Dense Reward Shaping:** Designed for RL. Agents receive immediate heuristic rewards for successful code execution, generating predictions, and improving validation scores, mitigating the sparse-reward problem in code generation.
+* **OpenEnv Compatible:** Fully compliant with the OpenEnv standard, enabling easy deployment to Hugging Face Spaces and evaluation via standard inference scripts.
 
 ## Quick Start
 
-The simplest way to use the Odse environment is through the `OdseEnv` class:
+The simplest way to interact with ODSE via the OpenEnv standard is through the `OdseEnv` client.
 
 ```python
+import asyncio
 from odse import OdseAction, OdseEnv
 
-try:
-    # Create environment from Docker image
-    odseenv = OdseEnv.from_docker_image("odse-env:latest")
+async def main():
+    # Connect to the ODSE environment (local or hosted)
+    async with OdseEnv(base_url="https://simeetnayan-odse.hf.space") as env:
+        # 1. Reset the environment (starts a new data science task)
+        result = await env.reset(difficulty="easy")
+        print(result.observation.task_description)
 
-    # Reset
-    result = odseenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+        # 2. Agent explores the data
+        code_action = OdseAction(
+            action_type="run_code",
+            code="print(train_df.head())\nprint(train_df.isnull().sum())"
+        )
+        result = await env.step(code_action)
+        print(result.observation.stdout)
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
+        # 3. Agent trains a model and predicts
+        train_code = """
+from sklearn.ensemble import RandomForestClassifier
+X = train_df.drop(target_column, axis=1)
+y = train_df[target_column]
 
-    for msg in messages:
-        result = odseenv.step(OdseAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
+model = RandomForestClassifier(random_state=42)
+model.fit(X, y)
 
-finally:
-    # Always clean up
-    odseenv.close()
+predictions = model.predict(test_features)
+"""
+        result = await env.step(OdseAction(action_type="run_code", code=train_code))
+        
+        # 4. Submit the predictions
+        final_result = await env.step(OdseAction(action_type="submit"))
+        print(f"Final Test Score: {final_result.info.get('test_score')}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 That's it! The `OdseEnv.from_docker_image()` method handles:
@@ -119,38 +143,39 @@ The deployed space includes:
 ## Environment Details
 
 ### Action
-**OdseAction**: Contains a single field
-- `message` (str) - The message to echo back
+**OdseAction**: Supports two main action types:
+- `run_code`: Requires a `code` string containing the Python code to execute.
+- `submit`: Terminal action. Evaluates the `predictions` variable on the hidden test set.
 
 ### Observation
-**OdseObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
+**OdseObservation**: Contains execution feedback and environment state
+- `stdout` / `stderr` (str) - Captured output from the executed code.
+- `execution_status` (str) - Result of the last execution (`success`, `error`, `timeout`).
+- `namespace_summary` (list) - Active variables and their shapes/types in the sandbox.
+- `validation_score` (float) - Current evaluation score on the validation set.
+- `dataset_info` (dict) - Metadata about the dataset features and target column.
+- `task_description` (str) - Objective description for the agent.
 
 ### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
+ODSE provides both dense and sparse rewards:
+- **Dense (Step) Reward**: Heuristic rewards for successful code execution, finding predictions, and improving validation scores (e.g., `+0.05` for success, `-0.05` for errors).
+- **Sparse (Final) Reward**: The actual test-set evaluation metric score (e.g., `0.0` to `1.0`) awarded upon submitting.
 
 ## Advanced Usage
 
 ### Connecting to an Existing Server
 
-If you already have a Odse environment server running, you can connect directly:
+If you already have an ODSE environment server running, you can connect directly:
 
 ```python
-from odse import OdseEnv
+from odse import OdseAction, OdseEnv
 
 # Connect to existing server
 odseenv = OdseEnv(base_url="<ENV_HTTP_URL_HERE>")
 
 # Use as normal
-result = odseenv.reset()
-result = odseenv.step(OdseAction(message="Hello!"))
+result = await odseenv.reset(difficulty="easy")
+result = await odseenv.step(OdseAction(action_type="run_code", code="print('Hello ODSE!')"))
 ```
 
 Note: When connecting to an existing server, `odseenv.close()` will NOT stop the server.
@@ -160,16 +185,18 @@ Note: When connecting to an existing server, `odseenv.close()` will NOT stop the
 The client supports context manager usage for automatic connection management:
 
 ```python
+import asyncio
 from odse import OdseAction, OdseEnv
 
 # Connect with context manager (auto-connects and closes)
-with OdseEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(OdseAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
+async def run_context():
+    async with OdseEnv(base_url="http://localhost:8000") as env:
+        result = await env.reset(difficulty="medium")
+        print(f"Task: {result.observation.task_description}")
+        # Multiple steps with low latency
+        for code in ["x = 10", "y = 20", "print(x + y)"]:
+            result = await env.step(OdseAction(action_type="run_code", code=code))
+            print(f"Output: {result.observation.stdout}")
 ```
 
 The client uses WebSocket connections for:
@@ -177,38 +204,6 @@ The client uses WebSocket connections for:
 - **Persistent session**: Server maintains your environment state
 - **Efficient for episodes**: Better for many sequential steps
 
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    OdseEnvironment,  # Pass class, not instance
-    OdseAction,
-    OdseObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from odse import OdseAction, OdseEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with OdseEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(OdseAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
 
 ## Development & Testing
 
@@ -238,18 +233,38 @@ uvicorn server.app:app --reload
 ## Project Structure
 
 ```
-odse/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # OdseEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── odse_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+.
+├── __init__.py
+├── client.py
+├── core
+│   ├── __init__.py
+│   ├── data
+│   │   ├── __init__.py
+│   │   ├── data_manager.py
+│   │   └── datasets.py
+│   ├── docker_executor.py
+│   ├── Dockerfile.sandbox
+│   ├── docs
+│   │   └── architecture.md
+│   ├── env.py
+│   ├── evaluator.py
+│   ├── example.py
+│   ├── executor.py
+│   ├── models.py
+│   ├── README.md
+│   ├── requirements.txt
+│   ├── reward.py
+│   ├── sandbox_runner.py
+├── Dockerfile
+├── inference.py
+├── models.py
+├── openenv.yaml
+├── pyproject.toml
+├── README.md
+├── server
+│   ├── __init__.py
+│   ├── app.py
+│   ├── odse_environment.py
+│   └── requirements.txt
+|── uv.lock
 ```
