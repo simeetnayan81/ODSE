@@ -19,8 +19,8 @@ API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "https://simeetnayan-odse.hf.space")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen3.5-4B"
-FALLBACK_MODEL_NAME = os.getenv("FALLBACK_MODEL_NAME") or "Qwen/Qwen2.5-3B-Instruct"
+MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-Coder-3B"
+FALLBACK_MODEL_NAME = os.getenv("FALLBACK_MODEL_NAME") or "Qwen/Qwen2.5-1.5B-Instruct"
 OOM_FALLBACK_MODEL_NAME = os.getenv("OOM_FALLBACK_MODEL_NAME") or "Qwen/Qwen2.5-1.5B-Instruct"
 BENCHMARK = os.getenv("BENCHMARK", "odse")
 TEMPERATURE = 0.7
