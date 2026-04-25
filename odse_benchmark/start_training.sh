@@ -3,21 +3,7 @@ set -euo pipefail
 
 echo "[benchmark] Container started at $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 echo "[benchmark] Python: $(python --version)"
-echo "[benchmark] USE_VLLM=${USE_VLLM:-auto} VLLM_MODE=${VLLM_MODE:-colocate}"
-export FORCE_DISABLE_VLLM="${FORCE_DISABLE_VLLM:-1}"
-
-# Hard safety: disable vLLM unless explicitly requested via USE_VLLM=1/true/yes.
-if [[ ! "${USE_VLLM:-0}" =~ ^(1|true|yes)$ ]]; then
-  export USE_VLLM=0
-fi
-
-# Sensible defaults for constrained GPUs when vLLM is explicitly enabled.
-if [[ "${USE_VLLM}" =~ ^(1|true|yes)$ ]]; then
-  export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.95}"
-  export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-12000}"
-fi
-echo "[benchmark] Effective USE_VLLM=${USE_VLLM} VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-n/a} VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-n/a}"
-echo "[benchmark] FORCE_DISABLE_VLLM=${FORCE_DISABLE_VLLM}"
+echo "[benchmark] TRL-only mode (vLLM removed)"
 
 if [[ ! -f "/app/grpo.py" ]]; then
   echo "[benchmark][error] /app/grpo.py not found."

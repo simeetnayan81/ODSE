@@ -1,6 +1,6 @@
 # Use latest Transformers so newer model types (e.g. qwen3_5) are recognized.
 git+https://github.com/huggingface/transformers.git
-trl[vllm]
+trl
 datasets
 accelerate
 huggingface_hub

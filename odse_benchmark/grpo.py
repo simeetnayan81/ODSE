@@ -1,7 +1,6 @@
 """ODSE GRPO fine-tuning entrypoint."""
 
 import asyncio
-import importlib.util
 import os
 import textwrap
 from datetime import datetime
@@ -22,7 +21,6 @@ ENV_BASE_URL = os.getenv("ENV_BASE_URL", "https://simeetnayan-odse.hf.space")
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen3.5-4B"
 FALLBACK_MODEL_NAME = os.getenv("FALLBACK_MODEL_NAME") or "Qwen/Qwen2.5-3B-Instruct"
-VLLM_FALLBACK_MODEL_NAME = os.getenv("VLLM_FALLBACK_MODEL_NAME") or "Qwen/Qwen3-4B"
 OOM_FALLBACK_MODEL_NAME = os.getenv("OOM_FALLBACK_MODEL_NAME") or "Qwen/Qwen2.5-1.5B-Instruct"
 BENCHMARK = os.getenv("BENCHMARK", "odse")
 TEMPERATURE = 0.7
@@ -47,12 +45,12 @@ PER_DEVICE_BATCH_SIZE = int(os.getenv("PER_DEVICE_BATCH_SIZE", "1"))
 WARMUP_STEPS = int(os.getenv("WARMUP_STEPS", "20"))
 LOGGING_STEPS = int(os.getenv("LOGGING_STEPS", "1"))
 MAX_COMPLETION_LENGTH = int(os.getenv("MAX_COMPLETION_LENGTH", "256"))
-VLLM_MODE = os.getenv("VLLM_MODE", "colocate")
-VLLM_SERVER_URL = os.getenv("VLLM_SERVER_URL", "http://localhost:8000")
-USE_VLLM_ENV = os.getenv("USE_VLLM", "auto").strip().lower()
-VLLM_GPU_MEMORY_UTILIZATION = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.95"))
-VLLM_MAX_MODEL_LEN = int(os.getenv("VLLM_MAX_MODEL_LEN", "12000"))
-FORCE_DISABLE_VLLM = os.getenv("FORCE_DISABLE_VLLM", "1").strip().lower() in {"1", "true", "yes"}
+MAX_PROMPT_LENGTH = int(os.getenv("MAX_PROMPT_LENGTH", "512"))
+GRADIENT_CHECKPOINTING = os.getenv("GRADIENT_CHECKPOINTING", "1").strip().lower() in {"1", "true", "yes"}
+USE_BF16 = os.getenv("BF16", "1").strip().lower() in {"1", "true", "yes"}
+USE_FP16 = os.getenv("FP16", "0").strip().lower() in {"1", "true", "yes"}
+PYTORCH_CUDA_ALLOC_CONF = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", PYTORCH_CUDA_ALLOC_CONF)
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -358,42 +356,11 @@ def _run_coro_sync(coro: Any) -> Any:
 def build_trainer(
     tokenizer: AutoTokenizer,
     model_name: str,
-    use_vllm_override: Optional[bool] = None,
 ) -> GRPOTrainer:
     task_prompts = (["task_easy", "task_medium", "task_hard"] * max(1, DATASET_SIZE // 3 + 1))[:DATASET_SIZE]
     train_dataset = Dataset.from_dict({"prompt": task_prompts})
-    if FORCE_DISABLE_VLLM:
-        use_vllm = False
-        print("FORCE_DISABLE_VLLM=1 -> vLLM disabled.", flush=True)
-    elif use_vllm_override is not None:
-        use_vllm = use_vllm_override
-    else:
-        has_vllm = importlib.util.find_spec("vllm") is not None
-        if USE_VLLM_ENV in {"1", "true", "yes"}:
-            use_vllm = True
-            if not has_vllm:
-                raise ImportError(
-                    "USE_VLLM is enabled but vLLM is not installed. Install with `pip install trl[vllm]` "
-                    "or set USE_VLLM=0."
-                )
-        elif USE_VLLM_ENV in {"0", "false", "no"}:
-            use_vllm = False
-        else:
-            # Be conservative in auto mode: many smaller GPUs fail during vLLM KV-cache init.
-            use_vllm = False
-            if has_vllm:
-                print(
-                    "USE_VLLM=auto selected safe mode (vLLM disabled). "
-                    "Set USE_VLLM=1 to force vLLM.",
-                    flush=True,
-                )
-            else:
-                print("vLLM not found; continuing with Transformers generation (USE_VLLM=0).", flush=True)
 
     grpo_kwargs: dict[str, Any] = dict(
-        use_vllm=use_vllm,
-        vllm_mode=VLLM_MODE,
-        vllm_server_base_url=VLLM_SERVER_URL if (use_vllm and VLLM_MODE == "server") else None,
         output_dir=OUTPUT_DIR,
         hub_model_id=HF_REPO_ID,
         hub_token=API_KEY,
@@ -412,10 +379,14 @@ def build_trainer(
         temperature=TEMPERATURE,
     )
     grpo_fields = getattr(GRPOConfig, "__dataclass_fields__", {})
-    if use_vllm and "vllm_gpu_memory_utilization" in grpo_fields:
-        grpo_kwargs["vllm_gpu_memory_utilization"] = VLLM_GPU_MEMORY_UTILIZATION
-    if use_vllm and "vllm_max_model_len" in grpo_fields:
-        grpo_kwargs["vllm_max_model_len"] = VLLM_MAX_MODEL_LEN
+    if "gradient_checkpointing" in grpo_fields:
+        grpo_kwargs["gradient_checkpointing"] = GRADIENT_CHECKPOINTING
+    if "max_prompt_length" in grpo_fields:
+        grpo_kwargs["max_prompt_length"] = MAX_PROMPT_LENGTH
+    if "bf16" in grpo_fields and USE_BF16 and torch.cuda.is_available():
+        grpo_kwargs["bf16"] = True
+    if "fp16" in grpo_fields and USE_FP16 and torch.cuda.is_available():
+        grpo_kwargs["fp16"] = True
 
     grpo_config = GRPOConfig(**grpo_kwargs)
 
@@ -467,19 +438,12 @@ def resolve_model_name() -> str:
         return FALLBACK_MODEL_NAME
 
 
-def _is_vllm_architecture_error(exc: Exception) -> bool:
-    msg = str(exc)
-    return "Model architectures" in msg and "not supported for now" in msg
-
-
 def _is_oom_error(exc: Exception) -> bool:
     msg = str(exc)
     return (
         "CUDA out of memory" in msg
         or "OutOfMemoryError" in msg
-        or "available KV cache memory" in msg
-        or "estimated maximum model length" in msg
-        or "decreasing `max_model_len`" in msg
+        or "CUDNN_STATUS_NOT_SUPPORTED" in msg
     )
 
 
@@ -507,37 +471,23 @@ def main() -> None:
     tokenizer = _load_tokenizer(trainer_model_name)
     trainer = None
 
-    # Try progressively safer setups to avoid crash loops on Spaces.
-    if FORCE_DISABLE_VLLM:
-        build_attempts: List[tuple[str, Optional[bool], str]] = [
-            (resolved_model_name, False, "forced non-vLLM mode"),
-            (OOM_FALLBACK_MODEL_NAME, False, "smaller OOM fallback model"),
-        ]
-    else:
-        build_attempts = [
-            (resolved_model_name, None, "auto mode"),
-            (VLLM_FALLBACK_MODEL_NAME, True, "vLLM fallback model"),
-            (resolved_model_name, False, "disable vLLM"),
-            (OOM_FALLBACK_MODEL_NAME, False, "smaller OOM fallback model"),
-        ]
+    # TRL-only fallback order: primary model, then smaller OOM fallback model.
+    build_attempts: List[tuple[str, str]] = [
+        (resolved_model_name, "primary model"),
+        (OOM_FALLBACK_MODEL_NAME, "smaller OOM fallback model"),
+    ]
 
     last_exc: Optional[Exception] = None
-    for candidate_model, vllm_override, label in build_attempts:
+    for candidate_model, label in build_attempts:
         try:
             print(f"Initializing trainer: model={candidate_model}, strategy={label}", flush=True)
             _cleanup_cuda_memory()
             tokenizer = _load_tokenizer(candidate_model)
-            trainer = build_trainer(tokenizer, candidate_model, use_vllm_override=vllm_override)
+            trainer = build_trainer(tokenizer, candidate_model)
             trainer_model_name = candidate_model
             break
         except Exception as exc:
             last_exc = exc
-            if _is_vllm_architecture_error(exc):
-                print(
-                    f"Skipping unsupported vLLM architecture for model `{candidate_model}`.",
-                    flush=True,
-                )
-                continue
             if _is_oom_error(exc):
                 print(
                     f"OOM while initializing `{candidate_model}` with strategy `{label}`; trying safer fallback.",
@@ -556,13 +506,18 @@ def main() -> None:
     except Exception as exc:
         if _is_oom_error(exc):
             print(
-                "Training failed due to memory/KV-cache limits; retrying with vLLM disabled.",
+                "Training failed due to memory limits.",
                 flush=True,
             )
-            _cleanup_cuda_memory()
-            tokenizer = _load_tokenizer(trainer_model_name)
-            trainer = build_trainer(tokenizer, trainer_model_name, use_vllm_override=False)
-            trainer.train()
+            if trainer_model_name != OOM_FALLBACK_MODEL_NAME:
+                print(f"Retrying training with smaller fallback model: {OOM_FALLBACK_MODEL_NAME}", flush=True)
+                _cleanup_cuda_memory()
+                trainer_model_name = OOM_FALLBACK_MODEL_NAME
+                tokenizer = _load_tokenizer(trainer_model_name)
+                trainer = build_trainer(tokenizer, trainer_model_name)
+                trainer.train()
+            else:
+                raise
         else:
             raise
     trainer.save_model(OUTPUT_DIR)

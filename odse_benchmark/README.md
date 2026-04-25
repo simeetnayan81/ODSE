@@ -9,12 +9,12 @@ license: mit
 ---
 # ODSE GRPO Training on Hugging Face Space
 
-This folder is designed so you can push its contents to a **Docker HF Space** and have training start automatically with **vLLM acceleration** enabled.
+This folder is designed so you can push its contents to a **Docker HF Space** and have training start automatically with **TRL-only GRPO training**.
 
 ## Files in this folder
 
 - `Dockerfile`: Builds the runtime and starts training.
-- `requirements.txt`: Python dependencies (including `trl[vllm]` and ODSE from GitHub).
+- `requirements.txt`: Python dependencies (including TRL and ODSE from GitHub).
 - `start_training.sh`: Validates env vars and runs `grpo.py`.
 - `.env.example`: Suggested environment variables.
 
@@ -34,9 +34,6 @@ This folder is designed so you can push its contents to a **Docker HF Space** an
    - `HF_REPO_ID` (required if `PUSH_TO_HUB=1`)
    - `PUSH_TO_HUB=1`
    - `ENV_BASE_URL` (your ODSE env URL)
-   - `USE_VLLM=0` (recommended default for reliability; startup script enforces this unless explicitly set to `1/true/yes`)
-   - `FORCE_DISABLE_VLLM=1` (hard-disable vLLM path in trainer; recommended until training is stable)
-   - `VLLM_MODE=colocate`
    - optional training vars from `.env.example`
 3. Push this `odse_benchmark/` folder as the Space repository contents:
    - `Dockerfile`, `requirements.txt`, `start_training.sh`, `grpo.py`, etc. at repo root.
@@ -45,15 +42,15 @@ This folder is designed so you can push its contents to a **Docker HF Space** an
 6. Track logs in the Space Logs tab.
 7. Confirm model files in `https://huggingface.co/<HF_REPO_ID>`.
 
-## vLLM notes
+## Memory stability notes
 
-- `FORCE_DISABLE_VLLM=1` is the safest default and bypasses vLLM completely.
-- After stability is confirmed, set `FORCE_DISABLE_VLLM=0` and then optionally try `USE_VLLM=1`.
-- If startup fails with KV-cache/max-seq-len errors, lower `VLLM_MAX_MODEL_LEN` (for example `12000`) and/or raise `VLLM_GPU_MEMORY_UTILIZATION` (for example `0.95`).
+- This setup is TRL-only and does not use vLLM.
+- For CUDA OOM, reduce `MAX_COMPLETION_LENGTH` (for example `128`), keep `PER_DEVICE_BATCH_SIZE=1`, and lower `DATASET_SIZE` for pilot runs.
+- Keep `GRADIENT_CHECKPOINTING=1` and `BF16=1` on supported GPUs.
+- If OOM persists, set `MODEL_NAME` directly to a smaller model (for example `Qwen/Qwen2.5-1.5B-Instruct`).
 - Keep `NUM_GENERATIONS>=2` for GRPO.
 - If a very new model architecture is not recognized, set `FALLBACK_MODEL_NAME` (default is `Qwen/Qwen2.5-3B-Instruct`).
-- If vLLM does not support your selected model architecture, set `VLLM_FALLBACK_MODEL_NAME` (default is `Qwen/Qwen3-4B`).
-- If GPU memory is insufficient during initialization, the script falls back to `OOM_FALLBACK_MODEL_NAME` (default `Qwen/Qwen2.5-1.5B-Instruct`) with vLLM disabled.
+- If GPU memory is insufficient during initialization, the script falls back to `OOM_FALLBACK_MODEL_NAME` (default `Qwen/Qwen2.5-1.5B-Instruct`).
 - If you see Triton/Inductor errors about missing C compiler, ensure Docker image includes `build-essential` and `CC/CXX` are set (already configured in this folder's `Dockerfile`).
 
 ## Push only benchmark to Space repo (example)
