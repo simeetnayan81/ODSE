@@ -1,0 +1,9 @@
+# Use latest Transformers so newer model types (e.g. qwen3_5) are recognized.
+git+https://github.com/huggingface/transformers.git
+trl[vllm]
+datasets
+accelerate
+huggingface_hub
+
+# Install ODSE package directly from GitHub because `odse` is not on pip.
+git+https://github.com/simeetnayan81/ODSE.git
