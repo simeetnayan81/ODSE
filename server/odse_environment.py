@@ -85,7 +85,6 @@ class OdseEnvironment(Environment):
                 ('synth_cls', 'classification'),
                 ('regression', 'regression'),
                 ("diabetes", "regression"),
-                ("diabetes_risk", "classification"),
                 ("digits", "classification"),
                 ("linnerud", "regression"),
             ]
